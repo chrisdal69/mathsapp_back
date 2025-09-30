@@ -1,7 +1,16 @@
 var express = require("express");
 var router = express.Router();
 const { Storage } = require("@google-cloud/storage");
-const storage = new Storage({ keyFilename: "config/gcs-key.json" });
+//const storage = new Storage({ keyFilename: "config/gcs-key.json" });
+
+const serviceAccount = JSON.parse(process.env.GCP_KEY);
+const storage = new Storage({
+  projectId: serviceAccount.project_id,
+  credentials: serviceAccount,
+});
+
+
+
 const bucketName = "mathsapp";
 const fs = require("fs");
 
