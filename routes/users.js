@@ -1,13 +1,13 @@
 var express = require("express");
 var router = express.Router();
 const { Storage } = require("@google-cloud/storage");
-//const storage = new Storage({ keyFilename: "config/gcs-key.json" });
+const storage = new Storage({ keyFilename: "config/gcs-key.json" });
 // *** pour gitHub pour Vercel ****
-const serviceAccount = JSON.parse(process.env.GCP_KEY);
-const storage = new Storage({
-  projectId: serviceAccount.project_id,
-  credentials: serviceAccount,
-});
+// const serviceAccount = JSON.parse(process.env.GCP_KEY);
+// const storage = new Storage({
+//   projectId: serviceAccount.project_id,
+//   credentials: serviceAccount,
+// });
 
 
 
@@ -37,7 +37,7 @@ router.post("/", async (req, res) => {
     req.files.fichiers = [req.files.fichiers];
   }
   for (let file of req.files.fichiers) {
-    const filePath = `./tmp/${file.name}`;
+    const filePath = `/tmp/${file.name}`;// './tmp/${file.name}' en local
     try {
       //Copie fichier dans dossier /tmp
       const resultMove = await file.mv(filePath);
