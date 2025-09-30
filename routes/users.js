@@ -2,7 +2,7 @@ var express = require("express");
 var router = express.Router();
 const { Storage } = require("@google-cloud/storage");
 //const storage = new Storage({ keyFilename: "config/gcs-key.json" });
-
+// *** pour gitHub pour Vercel ****
 const serviceAccount = JSON.parse(process.env.GCP_KEY);
 const storage = new Storage({
   projectId: serviceAccount.project_id,
