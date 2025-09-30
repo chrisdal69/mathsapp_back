@@ -31,8 +31,11 @@ router.get("/", async (req, res) => {
 
 // Récupérer l'upload du front et envoyer les fichiers dans le bucket google
 router.post("/", async (req, res) => {
-  console.log(req.body.name);
+  console.log("req.files",req.files);
   const fichiersCopies = [];
+  if (!Array.isArray(req.files.fichiers)){
+    req.files.fichiers = [req.files.fichiers];
+  }
   for (let file of req.files.fichiers) {
     const filePath = `./tmp/${file.name}`;
     try {
