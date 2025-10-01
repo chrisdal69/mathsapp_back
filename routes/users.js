@@ -3,7 +3,7 @@ var router = express.Router();
 const path = require("path");
 const { Storage } = require("@google-cloud/storage");
 
-const VERCEL = false; //false en localhost:3000
+const VERCEL = true; //false en localhost:3000
 let storage;
 if (VERCEL) {
   const serviceAccount = JSON.parse(process.env.GCP_KEY);
@@ -64,7 +64,8 @@ router.post("/", async (req, res) => {
   }
   // Boucle sur les fichiers reçus
   for (let file of req.files.fichiers) {
-    const filePath = `./tmp/${req.body.name}_${file.name}`; // './tmp/${file.name}' en local
+
+    const filePath = VERCEL ? `/tmp/${req.body.name}_${file.name}` : `./tmp/${req.body.name}_${file.name}` ; 
     try {
       // test des extensions et de la taille (5Mo)
       const ext = path.extname(file.name).toLowerCase();
