@@ -1,20 +1,37 @@
 var express = require("express");
 var router = express.Router();
+const path = require("path");
 const { Storage } = require("@google-cloud/storage");
-//const storage = new Storage({ keyFilename: "config/gcs-key.json" });
-// *** pour gitHub pour Vercel ****
-const serviceAccount = JSON.parse(process.env.GCP_KEY);
-const storage = new Storage({
-  projectId: serviceAccount.project_id,
-  credentials: serviceAccount,
-});
 
-
-
+const VERCEL = false; //false en localhost:3000
+let storage;
+if (VERCEL) {
+  const serviceAccount = JSON.parse(process.env.GCP_KEY);
+  storage = new Storage({
+    projectId: serviceAccount.project_id,
+    credentials: serviceAccount,
+  });
+} else {
+  storage = new Storage({ keyFilename: "config/gcs-key.json" });
+}
+//Info du google Storage
 const bucketName = "mathsapp";
 const fs = require("fs");
-
 const bucket = storage.bucket(bucketName);
+
+// Extension autorisés
+const allowedExtensions = [
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".txt",
+  ".py",
+];
 
 // Lister tous les fichiers qui sont dans le bucket
 router.get("/", async (req, res) => {
@@ -31,29 +48,42 @@ router.get("/", async (req, res) => {
 
 // Récupérer l'upload du front et envoyer les fichiers dans le bucket google
 router.post("/", async (req, res) => {
-  console.log("req.files",req.files);
+  // Si pas de nom reçu
+  if (!req.body.name || req.body.name === "") {
+    return res.status(400).send("Champs name vide.");
+  }
+  // Si pas de fichiers reçu
+  if (!req.files || Object.keys(req.files).length === 0) {
+    return res.status(400).send("No files were uploaded.");
+  }
+
   const fichiersCopies = [];
-  if (!Array.isArray(req.files.fichiers)){
+  // Cas d'1 seul fichier
+  if (!Array.isArray(req.files.fichiers)) {
     req.files.fichiers = [req.files.fichiers];
   }
+  // Boucle sur les fichiers reçus
   for (let file of req.files.fichiers) {
-    const filePath = `/tmp/${file.name}`;// './tmp/${file.name}' en local
+    const filePath = `./tmp/${req.body.name}_${file.name}`; // './tmp/${file.name}' en local
     try {
-      //Copie fichier dans dossier /tmp
-      const resultMove = await file.mv(filePath);
-      if (resultMove) {
-        return res.json({ result: false, error: "erreur move" });
+      // test des extensions et de la taille (5Mo)
+      const ext = path.extname(file.name).toLowerCase();
+      if (allowedExtensions.includes(ext) && file.size < 5000000) {
+        //Copie fichier dans dossier /tmp
+        const resultMove = await file.mv(filePath);
+        if (resultMove) {
+          return res.json({ result: false, error: "erreur move" });
+        }
+        //copie fichier dans cloud strorage
+        const repertoireBucket = "repertoire2";
+        const destFileName = `${repertoireBucket}/${req.body.name}_${file.name}`;
+        await storage.bucket(bucketName).upload(filePath, {
+          destination: destFileName,
+        });
+        //suppression du fichier du dossier /tmp
+        fs.unlinkSync(filePath);
+        fichiersCopies.push(file.name);
       }
-      //copie fichier dans cloud strorage
-      const repertoireBucket = "repertoire2";
-      const destFileName = `${repertoireBucket}/${file.name}`;
-      await storage.bucket(bucketName).upload(filePath, {
-        destination: destFileName,
-      });
-      //suppression du fichier du dossier /tmp
-      fs.unlinkSync(filePath);
-      fichiersCopies.push(file.name);
-
       //await storage.bucket('mathsapp').file(fileDelete).delete()
       // console.log(
       //   `${filePath} uploadé dans gs://${bucketName}/${destFileName}`
@@ -72,11 +102,11 @@ router.post("/", async (req, res) => {
 });
 
 router.delete("/", async (req, res) => {
-  const name = 'nsiNotes.xlsx'
+  const name = "nsiNotes.xlsx";
   const repertoireBucket = "repertoire2";
   const fileDelete = `${repertoireBucket}/${name}`;
-  await storage.bucket(bucketName).file(fileDelete).delete()
-    res.json({
+  await storage.bucket(bucketName).file(fileDelete).delete();
+  res.json({
     result: true,
     fichierSupprime: name,
   });
