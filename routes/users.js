@@ -33,6 +33,28 @@ const allowedExtensions = [
   ".py",
 ];
 
+
+// Dossier de stockage dans le bucket
+const repertoireBucket = "tp1"
+const folderName = "tp1/";
+async function createFolder() {
+
+  // On crée un "fichier" vide qui sert de dossier
+  const file = bucket.file(folderName);
+
+  await file.save(""); // écrit un contenu vide
+  console.log(`Dossier ${folderName} créé dans ${bucketName}`);
+}
+
+//createFolder().catch(console.error);
+//
+
+
+
+
+
+
+
 // Lister tous les fichiers qui sont dans le bucket
 router.get("/", async (req, res) => {
   try {
@@ -76,7 +98,6 @@ router.post("/", async (req, res) => {
           return res.json({ result: false, error: "erreur move" });
         }
         //copie fichier dans cloud strorage
-        const repertoireBucket = "repertoire2";
         const destFileName = `${repertoireBucket}/${req.body.name}_${file.name}`;
         await storage.bucket(bucketName).upload(filePath, {
           destination: destFileName,
