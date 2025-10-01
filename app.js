@@ -12,7 +12,10 @@ var app = express();
 const fileUpload = require('express-fileupload');
 app.use(fileUpload());
 const cors = require('cors');
-app.use(cors());
+app.use(cors({
+  origin: '*' // ou mettre le domaine de ton front
+}));
+//app.use(cors());
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
