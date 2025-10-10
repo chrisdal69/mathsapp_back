@@ -6,6 +6,7 @@ require("dotenv").config();
 require("./models/connection");
 
 var indexRouter = require("./routes/index");
+var authRoutes = require("./routes/auth");
 var usersRouter = require("./routes/users");
 var uploadRouter = require("./routes/upload");
 
@@ -15,7 +16,9 @@ app.use(fileUpload());
 const cors = require("cors");
 app.use(
   cors({
-    origin: "*", // ou mettre le domaine de ton front
+    origin: "http://localhost:3001", // Remplace par l'URL de ton frontend
+    credentials: true, // Autorise les cookies
+    optionsSuccessStatus: 200,
   })
 );
 //app.use(cors());
@@ -26,7 +29,8 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/", indexRouter);
-app.use("/users", usersRouter);
+app.use("/users", usersRouter); // pour profile, admin actions...
+app.use("/auth", authRoutes);   // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
 
 
