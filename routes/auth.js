@@ -5,7 +5,6 @@ const yup = require("yup");
 const User = require("../models/users");
 const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
-const { authenticate, authorize } = require("../middlewares/auth");
 
 /* DEBUT SIGNUP */
 // VERIFICATION DONNEE RECUES
@@ -57,12 +56,11 @@ const verifmailSchema = yup.object().shape({
     ),
 });
 // DONNEE POUR ENVOI EMAIL
-const gmailString = process.env.GMAIL_SEND_PASS;
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "christiandalferro@gmail.com",
-    pass: gmailString,
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_SEND_PASS,
   },
 });
 function generateCode(length = 4) {
@@ -102,7 +100,7 @@ router.post("/signup", async (req, res) => {
     const hashedCode = await bcrypt.hash(codeAlea, 10); // hash du code avant stockage
 
     const mailOptions = {
-      from: "christiandalferro@gmail.com",
+      from: process.env.GMAIL_USER,
       to: email,
       subject: "Inscription MathsApp - Vérification de l’email",
       text: `Bonjour ${prenom},\n\nVotre code de vérification est : ${codeAlea}\n\nCe code expire dans 10 minutes.`,
@@ -237,7 +235,7 @@ router.post("/resend-code", async (req, res) => {
 
     // 6️⃣ Envoie du nouveau mail
     const mailOptions = {
-      from: "christiandalferro@gmail.com",
+      from: process.env.GMAIL_USER,
       to: email,
       subject: "Nouveau code de vérification - MathsApp",
       text: `Bonjour,\n\nVoici votre nouveau code de vérification : ${newCode}\nCe code expire dans 10 minutes.`,
@@ -299,13 +297,14 @@ router.post("/login", async (req, res) => {
     res.cookie("jwt", accessToken, {
       httpOnly: true, // Le cookie n'est pas accessible via JavaScript
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict", // Protège contre les attaques CSRF
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       // pas de maxAge => cookie supprimé à la fermeture de l'onglet
     });
+
     // 3. Génère le JWT refresh et l'envoie dans un cookie httpOnly
     const refreshToken = jwt.sign(
       { userId: data._id, email: data.email },
-      process.env.ACCESS_TOKEN_SECRET,
+      process.env.REFRESH_TOKEN_SECRET,
       { expiresIn: "4h" }
     );
     // 🔑 Enregistrement du refreshToken en base
@@ -315,7 +314,7 @@ router.post("/login", async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 4 * 60 * 60 * 1000, // 4 heures
     });
 
@@ -370,17 +369,20 @@ router.post("/refresh", async (req, res) => {
     const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
 
     // 3- Génère un nouveau accessToken
-    const newAccessToken = jwt.sign(
-      { userId: decoded.userId, email: decoded.email },
-      process.env.ACCESS_TOKEN_SECRET,
-      { expiresIn: "15m" }
-    );
+
+
+ const newAccessToken = jwt.sign(
+    { userId: decoded.userId, email: decoded.email, role: data.role },
+    process.env.ACCESS_TOKEN_SECRET,
+    { expiresIn: "15m" }
+  );
+
 
     // 4- Met à jour le cookie
     res.cookie("jwt", newAccessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     });
 
     res.json({ result: true, message: "Token rafraîchi" });
