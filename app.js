@@ -14,14 +14,25 @@ var app = express();
 const fileUpload = require("express-fileupload");
 app.use(fileUpload());
 const cors = require("cors");
+const allowedOrigins = [
+  "http://localhost:3001", // front en local
+  "https://mathsapp-front.vercel.app", // front en production
+];
 app.use(
   cors({
-    origin: "http://localhost:3001", // Remplace par l'URL de ton frontend
-    credentials: true, // Autorise les cookies
+    origin: function (origin, callback) {
+      // Autorise les requêtes sans origin (Postman, server-side) ou celles dans la liste
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.error("❌ Requête refusée par CORS : ", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
     optionsSuccessStatus: 200,
   })
 );
-//app.use(cors());
 app.use(logger("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); //false ds la Capsule
@@ -30,8 +41,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/", indexRouter);
 app.use("/users", usersRouter); // pour profile, admin actions...
-app.use("/auth", authRoutes);   // pour login/logout/signup/refresh
+app.use("/auth", authRoutes); // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
-
 
 module.exports = app;
