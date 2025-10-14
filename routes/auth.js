@@ -267,6 +267,7 @@ const loginSchema = yup.object().shape({
 });
 router.post("/login", async (req, res) => {
   let { email, password } = req.body;
+  console.log("etape 1 ", email, password);
   try {
     // 1- Validation des données avec Yup
     await loginSchema.validate(
@@ -285,6 +286,9 @@ router.post("/login", async (req, res) => {
         .json({ message: "Compte inexistant ou non vérifié" });
     }
     // 3. Génère le JWT access et l'envoie dans un cookie httpOnly
+
+    console.log("etape 2 ", data);
+
     const accessToken = jwt.sign(
       {
         userId: data._id,
@@ -296,6 +300,7 @@ router.post("/login", async (req, res) => {
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: "1h" }
     );
+    console.log("etape 3 ");
 
     res.cookie("jwt", accessToken, {
       httpOnly: true, // Le cookie n'est pas accessible via JavaScript
