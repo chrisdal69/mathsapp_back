@@ -40,7 +40,7 @@ const signupSchema = yup.object().shape({
     )
     .required("Confirmez votre mot de passe"),
 });
-const verifmailSchema = yup.object().shape({
+const verifmailcodeSchema = yup.object().shape({
   email: yup
     .string()
     .trim()
@@ -48,13 +48,9 @@ const verifmailSchema = yup.object().shape({
     .required("L'email est obligatoire"),
   code: yup
     .string()
-    .required("Le code est obligatoire")
-    .length(4, "Le code doit contenir exactement 4 caractères")
-    .matches(
-      /^[A-Z0-9]{4}$/,
-      "Le code doit contenir uniquement des lettres majuscules et/ou des chiffres"
-    ),
+    .required("Le code est obligatoire"),
 });
+
 // DONNEE POUR ENVOI EMAIL
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -144,7 +140,7 @@ router.post("/verifmail", async (req, res) => {
   const { email, code } = req.body;
   try {
     // 1️⃣ Validation des données avec Yup
-    await verifmailSchema.validate(
+    await verifmailcodeSchema.validate(
       { email, code },
       { abortEarly: false } // pour obtenir toutes les erreurs à la fois
     );
@@ -179,8 +175,7 @@ router.post("/verifmail", async (req, res) => {
     await User.updateOne(
       { email },
       {
-        $set: { isVerified: true },
-        $unset: { confirm: "", confirmExpires: "" },
+        $set: { isVerified: true, confirm: "", confirmExpires: "" },
       }
     );
     return res
@@ -285,13 +280,21 @@ router.post("/login", async (req, res) => {
       !bcrypt.compareSync(password, data.password) ||
       !data.isVerified
     ) {
-      return res.status(401).json({ message: "Compte non vérifié" });
+      return res
+        .status(401)
+        .json({ message: "Compte inexistant ou non vérifié" });
     }
     // 3. Génère le JWT access et l'envoie dans un cookie httpOnly
     const accessToken = jwt.sign(
-      { userId: data._id, email: data.email, role: data.role }, // 👈 ajout du rôle
+      {
+        userId: data._id,
+        email: data.email,
+        nom: data.nom,
+        prenom: data.prenom,
+        role: data.role,
+      }, // 👈 ajout du rôle
       process.env.ACCESS_TOKEN_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: "1h" }
     );
 
     res.cookie("jwt", accessToken, {
@@ -301,24 +304,12 @@ router.post("/login", async (req, res) => {
       // pas de maxAge => cookie supprimé à la fermeture de l'onglet
     });
 
-    // 3. Génère le JWT refresh et l'envoie dans un cookie httpOnly
-    const refreshToken = jwt.sign(
-      { userId: data._id, email: data.email },
-      process.env.REFRESH_TOKEN_SECRET,
-      { expiresIn: "4h" }
-    );
-    // 🔑 Enregistrement du refreshToken en base
-    data.refreshToken = refreshToken;
-    await data.save();
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 4 * 60 * 60 * 1000, // 4 heures
+    return res.json({
+      message: "Connexion réussie",
+      email: data.email,
+      nom: data.nom,
+      prenom: data.prenom,
     });
-
-    return res.json({ message: "Connexion réussie" });
   } catch (error) {
     // Gestion des erreurs de validation Yup
     if (error.name === "ValidationError") {
@@ -337,68 +328,174 @@ router.post("/login", async (req, res) => {
 /************************************************************************* */
 /* DEBUT LOGOUT */
 router.post("/logout", async (req, res) => {
-  const { refreshToken } = req.cookies;
-  if (refreshToken) {
-    // Supprimer le refreshToken de la base
-    await User.updateOne({ refreshToken }, { $unset: { refreshToken: "" } });
-  }
-  // Supprimer les cookies
   res.clearCookie("jwt");
-  res.clearCookie("refreshToken");
   return res.json({ message: "Déconnexion réussie" });
 });
 
 /* FIN LOGOUT */
 /************************************************************************* */
 
-/* DEBUT REFRESH */
-router.post("/refresh", async (req, res) => {
-  const { refreshToken } = req.cookies;
-  if (!refreshToken) {
-    return res.status(401).json({ message: "Refresh token manquant" });
-  }
-
+/* DEBUT FORGOT */
+const verifmailSchema = yup.object().shape({
+  email: yup
+    .string()
+    .trim()
+    .email("Adresse email invalide")
+    .required("L'email est obligatoire"),
+});
+const verifmailcodepassSchema = yup.object().shape({
+  email: yup
+    .string()
+    .trim()
+    .email("Adresse email invalide")
+    .required("L'email est obligatoire"),
+  newPassword: yup
+    .string()
+    .min(8, "8 caractères minimum")
+    .matches(/[A-Z]/, "Une majuscule est requise")
+    .matches(/[a-z]/, "Une minuscule est requise")
+    .matches(/[0-9]/, "Un chiffre est requis")
+    .matches(/[^A-Za-z0-9]/, "Un caractère spécial est requis")
+    .required("Mot de passe obligatoire"),
+  code: yup
+    .string()
+    .required("Le code est obligatoire")
+});
+router.post("/forgot", async (req, res) => {
+  const { email } = req.body;
   try {
-    // 1- Vérifie si ce refreshToken existe en base
-    const data = await User.findOne({ refreshToken });
-    if (!data) {
-      return res.status(403).json({ message: "Refresh token invalide" });
+    // 1️⃣ Validation des données avec Yup
+    await verifmailSchema.validate(
+      { email },
+      { abortEarly: false } // pour obtenir toutes les erreurs à la fois
+    );
+
+    // 2️⃣ Vérification si cet email existe bien
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: "Cet email n'est pas connu" });
     }
+    if (!user.isVerified) {
+      return res
+        .status(400)
+        .json({ error: "Ce compte n’a pas encore été vérifié." });
+    }
+    // 3️⃣ Envoi d'un code de validation
+    const codeAlea = generateCode();
+    const hashedCode = await bcrypt.hash(codeAlea, 10); // hash du code avant stockage
+    const prenom = user.prenom;
+    await User.updateOne(
+      { email },
+      {
+        $set: {
+          confirm: hashedCode,
+          confirmExpires: new Date(Date.now() + 10 * 60 * 1000), // expire dans 10 min
+        },
+      }
+    );
+    const mailOptions = {
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: "MathsApp - Réinitialisation du mot de passe",
+      text: `Bonjour ${prenom},\n\nVotre code de réinitialisation est : ${codeAlea}\n\nCe code expire dans 10 minutes.`,
+    };
+    const info = await transporter.sendMail(mailOptions);
 
-    // 2- Vérifie le refresh token JWT
-    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
-
-    // 3- Génère un nouveau accessToken
-
-
- const newAccessToken = jwt.sign(
-    { userId: decoded.userId, email: decoded.email, role: data.role },
-    process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: "15m" }
-  );
-
-
-    // 4- Met à jour le cookie
-    res.cookie("jwt", newAccessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    });
-
-    res.json({ result: true, message: "Token rafraîchi" });
-  } catch (err) {
-    // Token invalide → déconnexion
-    res.clearCookie("jwt");
-    res.clearCookie("refreshToken");
-
-    // Supprime en base si jamais il était stocké
-    await User.updateOne({ refreshToken }, { $unset: { refreshToken: "" } });
-
-    return res.status(401).json({ message: "Session expirée" });
+    // 5️⃣ Réponse OK
+    return res
+      .status(201)
+      .json({ sendMail: true, email, infoMail: info.messageId });
+  } catch (error) {
+    // Gestion des erreurs de validation Yup
+    if (error.name === "ValidationError") {
+      const validationErrors = error.inner.map((err) => ({
+        field: err.path,
+        message: err.message,
+      }));
+      return res.status(400).json({ errors: validationErrors });
+    }
+    console.error("Erreur lors de l'inscription :", error);
+    return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
 
-/* FIN REFRESH */
+router.post("/reset-password", async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  try {
+    // 1️⃣ Validation des données avec Yup
+    await verifmailcodepassSchema.validate(
+      { email, code, newPassword },
+      { abortEarly: false } // pour obtenir toutes les erreurs à la fois
+    );
+
+    // 2️⃣ Lecture du code dans la bdd Mongoose
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res
+        .status(400)
+        .json({ error: "Aucun compte trouvé pour cet email." });
+    }
+    // ⏳ Vérifie expiration du code
+    if (!user.confirmExpires || user.confirmExpires < new Date()) {
+      return res
+        .status(400)
+        .json({ error: "Le code a expiré. Veuillez en demander un nouveau." });
+    }
+    // 🔑 Vérifie le code
+    const isMatch = await bcrypt.compare(code, user.confirm);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Code incorrect : Retour et réessayer !" });
+    }
+    // ✅ Active le compte
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await User.updateOne(
+      { email },
+      {
+        $set: {
+          password: hashedPassword,
+          confirm: "",
+          confirmExpires: "",
+        },
+      }
+    );
+    return res.status(200).json({
+      success: true,
+      message: "Mot de passe mis à jour avec succès.",
+    });
+  } catch (error) {
+    // Gestion des erreurs de validation Yup
+    if (error.name === "ValidationError") {
+      const validationErrors = error.inner.map((err) => ({
+        field: err.path,
+        message: err.message,
+      }));
+      return res.status(400).json({ errors: validationErrors });
+    }
+    console.error("Erreur lors de l'inscription :", error);
+    return res.status(500).json({ error: "Erreur interne du serveur" });
+  }
+});
+
+/* FIN FORGOT */
 /************************************************************************* */
+/* Route pour verif cookies (non utilisé) */
+router.get("/me", async (req, res) => {
+  try {
+    const token = req.cookies.jwt;
+    if (!token) return res.status(401).json({ error: "Non authentifié" });
+
+    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    const { email, nom, prenom, role } = decoded;
+    res.json({ user: { email, nom, prenom, role } });
+  } catch (err) {
+    res.status(403).json({ error: "Token invalide ou expiré" });
+  }
+});
+
+
+
+
+
 
 module.exports = router;

@@ -3,14 +3,17 @@ const jwt = require("jsonwebtoken");
 const authenticate = (req, res, next) => {
   const token = req.cookies.jwt;
   if (!token) {
-    return res.status(403).json({ message: "Non autorisé" });
+    return res.status(401).json({ message: "Non autorisé - token manquant" });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-    req.user = decoded; // on ajoute userId, email, role
+    req.user = decoded; // contient userId, email, nom, prenom, role
     next();
-  } catch (err) { 
+  } catch (err) {
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Session expirée" });
+    }
     return res.status(403).json({ message: "Token invalide" });
   }
 };

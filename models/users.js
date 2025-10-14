@@ -9,7 +9,6 @@ const userSchema = new mongoose.Schema({
   isVerified: { type: Boolean, default: false },
   confirm: String, // code hashé
   confirmExpires: Date,
-  refreshToken: { type: String, default: null },
   role: { type: String, enum: ["user", "admin", "superadmin"], default: "user" }
 });
 
