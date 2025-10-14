@@ -46,9 +46,7 @@ const verifmailcodeSchema = yup.object().shape({
     .trim()
     .email("Adresse email invalide")
     .required("L'email est obligatoire"),
-  code: yup
-    .string()
-    .required("Le code est obligatoire"),
+  code: yup.string().required("Le code est obligatoire"),
 });
 
 // DONNEE POUR ENVOI EMAIL
@@ -94,7 +92,6 @@ router.post("/signup", async (req, res) => {
     // 3️⃣ Validation de l'adresse email récupérée
     const codeAlea = generateCode();
     const hashedCode = await bcrypt.hash(codeAlea, 10); // hash du code avant stockage
-
     const mailOptions = {
       from: process.env.GMAIL_USER,
       to: email,
@@ -116,7 +113,7 @@ router.post("/signup", async (req, res) => {
       confirmExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 min
     });
     const newDoc = await newUser.save();
-    console.log(newDoc);
+    console.log("signup : ", newDoc);
 
     // 5️⃣ Réponse OK
     return res
@@ -147,6 +144,7 @@ router.post("/verifmail", async (req, res) => {
 
     // 2️⃣ Lecture du code dans la bdd Mongoose
     const user = await User.findOne({ email });
+
     if (!user) {
       return res
         .status(400)
@@ -166,7 +164,8 @@ router.post("/verifmail", async (req, res) => {
     }
 
     // 🔑 Vérifie le code
-    const isMatch = await bcrypt.compare(code, user.confirm);
+    const isMatch = bcrypt.compareSync(code, user.confirm);
+    console.log("verifmail isMatch: ", isMatch);
     if (!isMatch) {
       return res.status(400).json({ error: "Code incorrect." });
     }
@@ -219,15 +218,16 @@ router.post("/resend-code", async (req, res) => {
 
     // 4️⃣ Génère un nouveau code
     const newCode = generateCode();
-    const hashedCode = await bcrypt.hash(newCode, 10);
+    const newHashedCode = await bcrypt.hash(newCode, 10);
+
     const newExpire = new Date(Date.now() + 10 * 60 * 1000); // expire dans 10 min
 
     // 5️⃣ Met à jour le code dans la base
     await User.updateOne(
       { email },
-      { $set: { confirm: hashedCode, confirmExpires: newExpire } }
+      { $set: { confirm: newHashedCode, confirmExpires: newExpire } }
     );
-
+    console.log("code dans /resend-code : ", newCode);
     // 6️⃣ Envoie du nouveau mail
     const mailOptions = {
       from: process.env.GMAIL_USER,
@@ -357,9 +357,7 @@ const verifmailcodepassSchema = yup.object().shape({
     .matches(/[0-9]/, "Un chiffre est requis")
     .matches(/[^A-Za-z0-9]/, "Un caractère spécial est requis")
     .required("Mot de passe obligatoire"),
-  code: yup
-    .string()
-    .required("Le code est obligatoire")
+  code: yup.string().required("Le code est obligatoire"),
 });
 router.post("/forgot", async (req, res) => {
   const { email } = req.body;
@@ -419,6 +417,60 @@ router.post("/forgot", async (req, res) => {
   }
 });
 
+router.post("/resend-forgot", async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    // 1️⃣ Vérifie que l’email est fourni
+    if (!email) {
+      return res.status(400).json({ error: "L'adresse email est requise." });
+    }
+
+    // 2️⃣ Recherche de l’utilisateur
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res
+        .status(400)
+        .json({ error: "Aucun compte trouvé avec cet email." });
+    }
+
+    // 3️⃣ Vérifie si déjà vérifié
+    if (!user.isVerified) {
+      return res
+        .status(400)
+        .json({ error: "Ce compte n'a pas été vérifié à l'inscription." });
+    }
+
+    // 4️⃣ Génère un nouveau code
+    const newCode = generateCode();
+    const hashedCode = await bcrypt.hash(newCode, 10);
+    const newExpire = new Date(Date.now() + 10 * 60 * 1000); // expire dans 10 min
+
+    // 5️⃣ Met à jour le code dans la base
+    await User.updateOne(
+      { email },
+      { $set: { confirm: hashedCode, confirmExpires: newExpire } }
+    );
+
+    // 6️⃣ Envoie du nouveau mail
+    const mailOptions = {
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: "Nouveau code de vérification - MathsApp",
+      text: `Bonjour,\n\nVoici votre nouveau code de vérification : ${newCode}\nCe code expire dans 10 minutes.`,
+    };
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({
+      resend: true,
+      message: "Un nouveau code a été envoyé par email.",
+    });
+  } catch (error) {
+    console.error("Erreur lors du renvoi du code :", error);
+    return res.status(500).json({ error: "Erreur interne du serveur." });
+  }
+});
+
 router.post("/reset-password", async (req, res) => {
   const { email, code, newPassword } = req.body;
   try {
@@ -444,7 +496,9 @@ router.post("/reset-password", async (req, res) => {
     // 🔑 Vérifie le code
     const isMatch = await bcrypt.compare(code, user.confirm);
     if (!isMatch) {
-      return res.status(400).json({ error: "Code incorrect : Retour et réessayer !" });
+      return res
+        .status(400)
+        .json({ error: "Code incorrect : Retour et réessayer !" });
     }
     // ✅ Active le compte
     const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -492,10 +546,5 @@ router.get("/me", async (req, res) => {
     res.status(403).json({ error: "Token invalide ou expiré" });
   }
 });
-
-
-
-
-
 
 module.exports = router;

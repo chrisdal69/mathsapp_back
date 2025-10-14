@@ -2,8 +2,11 @@ var express = require("express");
 var router = express.Router();
 const path = require("path");
 const { Storage } = require("@google-cloud/storage");
+const { authenticate, authorize } = require("../middlewares/auth");
 
-const VERCEL = false; //false en localhost:3000
+const NODE_ENV = process.env.NODE_ENV;
+const VERCEL = NODE_ENV === "production" ;
+
 let storage;
 if (VERCEL) {
   const serviceAccount = JSON.parse(process.env.GCP_KEY);
@@ -69,7 +72,7 @@ router.get("/", async (req, res) => {
 });
 
 // Récupérer l'upload du front et envoyer les fichiers dans le bucket google
-router.post("/", async (req, res) => {
+router.post("/", authenticate, async (req, res) => {
   // Si pas de nom reçu
   if (!req.body.name || req.body.name === "") {
     return res.status(400).send("Champs name vide.");
