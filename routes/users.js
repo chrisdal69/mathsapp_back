@@ -23,10 +23,12 @@ router.get("/me", authenticate, (req, res) => {
   console.log("email, nom, prenom, role : ",email, nom, prenom, role)
   res.json({ email, nom, prenom, role });
 });
-/* DEBUT info utilisateur */
+/* FIN info utilisateur */
 
 
 /************************************************************************* */
+
+
 /* DEBUT Changepassword */
 const schema = yup.object().shape({
   newPassword: yup
