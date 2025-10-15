@@ -118,20 +118,34 @@ async function createPublicFolder(dossierParent, folderName) {
 
 /* DEBUT Lister des fichiers qui sont dans le répertoire */
 
-router.get("/:repertoire", async (req, res) => {
-  const repertoire = req.params.repertoire;
-  console.log("repertoire ds upload.js : ", repertoire, req);
+router.post("/recup", authenticate, async (req, res) => {
   try {
-    // Utilise le préfixe "tp1/" pour ne récupérer que les fichiers de ce dossier
+    // Validation des champs name , parent et repertoire
+    const safeName = validatePathComponent(req.body.name, "Nom");
+    const parent = validatePathComponent(req.body.parent, "Dossier parent");
+    const repertoire = validatePathComponent(
+      req.body.repertoire,
+      "Nom de répertoire"
+    );
+    const repertoireBucket = `${parent}/${repertoire}`;
+
+    // On cible le n répertoire
     const [files] = await bucket.getFiles({
-      prefix: `${repertoire}/`, // dossier cible
+      prefix: `${repertoireBucket}/`, // dossier cible
       delimiter: "/", // permet d'éviter de descendre dans des sous-dossiers
     });
 
     // Extraire uniquement les noms de fichiers
-    const fileNames = files.map((file) => file.name);
+    const fileNames = files.map((file) => {
+      return {
+        name: file.name,
+        url: `https://storage.googleapis.com/${bucketName}/${file.name}`,
+      };
+    });
+   const fileNamesFilter = fileNames.filter(obj => obj.name.split("/").pop().startsWith(safeName + "_"));
 
-    res.json(fileNames);
+
+    res.json(fileNamesFilter);
   } catch (err) {
     console.error(
       "Erreur lors de la récupération des fichiers du dossier tp1:",
