@@ -2,7 +2,7 @@ var express = require("express");
 var router = express.Router();
 const path = require("path");
 const { Storage } = require("@google-cloud/storage");
-const { authenticate, authorize } = require("../middlewares/auth");
+const { authenticate, authorize, verifyToken } = require("../middlewares/auth");
 
 //GESTION du google Storage
 const NODE_ENV = process.env.NODE_ENV;
@@ -121,7 +121,8 @@ async function createPublicFolder(dossierParent, folderName) {
 router.post("/recup", authenticate, async (req, res) => {
   try {
     // Validation des champs name , parent et repertoire
-    const safeName = validatePathComponent(req.body.name, "Nom");
+    const { nom, prenom, email, role } = req.user;
+    const safeName = `${removeSpaces(nom)}${removeSpaces(prenom)}`;
     const parent = validatePathComponent(req.body.parent, "Dossier parent");
     const repertoire = validatePathComponent(
       req.body.repertoire,
@@ -142,8 +143,12 @@ router.post("/recup", authenticate, async (req, res) => {
         url: `https://storage.googleapis.com/${bucketName}/${file.name}`,
       };
     });
-   const fileNamesFilter = fileNames.filter(obj => obj.name.split("/").pop().startsWith(safeName + "_"));
-
+    const fileNamesFilter = fileNames.filter((obj) =>
+      obj.name
+        .split("/")
+        .pop()
+        .startsWith(safeName + "_")
+    );
 
     res.json(fileNamesFilter);
   } catch (err) {
@@ -192,13 +197,16 @@ function validatePathComponent(value, label) {
     throw new Error(`${label} invalide : caractères de chemin interdits`);
   }
 
-  return cleaned.toLowerCase();
+  return cleaned;
+}
+
+function removeSpaces(str) {
+  //enlève les espaces
+  return str.replace(/\s+/g, "");
 }
 
 router.post("/", authenticate, async (req, res) => {
   try {
-    // Validation du champ name
-    const safeName = validatePathComponent(req.body.name, "Nom");
     // Validation parent et repertoire
     const parent = validatePathComponent(req.body.parent, "Dossier parent");
     const repertoire = validatePathComponent(
@@ -213,10 +221,14 @@ router.post("/", authenticate, async (req, res) => {
     // Création du répertoire public si besoin
     await createPublicFolder(parent, repertoire);
     const repertoireBucket = `${parent}/${repertoire}`;
+    // Préfixe du user devant le fichier
+    const { nom, prenom, email, role } = req.user;
+    const safeName = `${removeSpaces(nom)}${removeSpaces(prenom)}`;
     // Vérifie la présence de fichiers
     if (!req.files || Object.keys(req.files).length === 0) {
       return res.status(400).send("Aucun fichier reçu.");
     }
+    // 
     const fichiersCopies = [];
     const fichiers = Array.isArray(req.files.fichiers)
       ? req.files.fichiers
@@ -272,16 +284,93 @@ router.post("/", authenticate, async (req, res) => {
 /************************************************************************* */
 
 /* DEBUT supprimer un fichier */
-router.delete("/", async (req, res) => {
-  const name = "nsiNotes.xlsx";
-  const repertoireBucket = "repertoire2";
-  const fileDelete = `${repertoireBucket}/${name}`;
-  await storage.bucket(bucketName).file(fileDelete).delete();
-  res.json({
-    result: true,
-    fichierSupprime: name,
-  });
+router.post("/delete", authenticate, async (req, res) => {
+  try {
+    const { parent, repertoire, file } = req.body;
+
+    if (!parent || !repertoire || !file) {
+      return res.status(400).json({ success: false, message: "Données manquantes" });
+    }
+
+    const filePath = `${parent}/${repertoire}/${file}`;
+    const fileRef = bucket.file(filePath);
+
+    await fileRef.delete();
+
+    console.log(`✅ Fichier supprimé : ${filePath}`);
+    return res.json({ success: true, message: "Fichier supprimé" });
+  } catch (err) {
+    console.error("Erreur suppression fichier :", err);
+    return res.status(500).json({
+      success: false,
+      message: "Erreur lors de la suppression du fichier",
+      error: err.message,
+    });
+  }
 });
 /* FIN supprimer un fichier */
+
+/* DEBUT renommer un fichier */
+router.post("/rename", authenticate, async (req, res) => {
+  try {
+    const { parent, repertoire, oldName, newName } = req.body;
+
+    if (!parent || !repertoire || !oldName || !newName) {
+      return res.status(400).json({ success: false, message: "Données manquantes" });
+    }
+
+    const oldPath = `${parent}/${repertoire}/${oldName}`;
+    const newPath = `${parent}/${repertoire}/${newName}`;
+
+    const oldFile = bucket.file(oldPath);
+    const newFile = bucket.file(newPath);
+
+    // Vérifie si l’ancien fichier existe
+    const [exists] = await oldFile.exists();
+    if (!exists) {
+      return res.status(404).json({ success: false, message: "Fichier introuvable" });
+    }
+
+    // Copie vers le nouveau nom
+    await oldFile.copy(newFile);
+    // Supprime l’ancien fichier
+    await oldFile.delete();
+
+    console.log(`✏️ Fichier renommé : ${oldPath} → ${newPath}`);
+    return res.json({ success: true, message: "Fichier renommé" });
+  } catch (err) {
+    console.error("Erreur renommage fichier :", err);
+    return res.status(500).json({
+      success: false,
+      message: "Erreur lors du renommage du fichier",
+      error: err.message,
+    });
+  }
+});
+/* FIN renommer un fichier */
+
+
+/* DEBUT exemple route pour utiliser veriyToken */
+
+router.get("/profil", verifyToken, (req, res) => {
+  // Tu as maintenant accès à req.user (décodé depuis le JWT)
+  const { nom, prenom, email, role } = req.user;
+
+  res.json({
+    message: "Données de l'utilisateur connecté",
+    nom,
+    prenom,
+    email,
+    role,
+  });
+});
+
+//router.use(verifyToken);
+
+// Toutes les routes en dessous sont protégées
+router.get("/dashboard", (req, res) => {
+  res.json({ message: `Bienvenue ${req.user.prenom} ${req.user.nom}` });
+});
+/* FIN exemple route pour utiliser veriyToken */
 
 module.exports = router;
