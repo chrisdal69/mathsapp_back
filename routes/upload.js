@@ -32,6 +32,9 @@ const allowedExtensions = [
   ".xlsx",
   ".txt",
   ".py",
+  ".html",
+  ".css",
+  //".js"
 ];
 
 /************************************************************************* */
@@ -238,6 +241,7 @@ router.post("/", authenticate, async (req, res) => {
       const ext = path.extname(file.name).toLowerCase();
       if (!allowedExtensions.includes(ext)) {
         console.warn(`Extension refusée : ${file.name}`);
+        
         continue;
       }
 

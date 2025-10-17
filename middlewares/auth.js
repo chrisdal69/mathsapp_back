@@ -50,4 +50,3 @@ function verifyToken(req, res, next) {
   }
 }
 module.exports = { authenticate, authorize , verifyToken};
-0
