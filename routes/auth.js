@@ -5,7 +5,7 @@ const yup = require("yup");
 const User = require("../models/users");
 const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
-
+ 
 /* DEBUT SIGNUP */
 // VERIFICATION DONNEE RECUES
 const signupSchema = yup.object().shape({
