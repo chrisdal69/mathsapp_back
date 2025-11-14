@@ -34,11 +34,11 @@ const allowedExtensions = [
   ".py",
   ".html",
   ".css",
-  //".js"
+  ".js"
 ];
 
 // Liste blanche optionnelle des parents
-const allowedParents = ["ciel1"];
+const allowedParents = ["ciel1","cloud"];
 
 /************************************************************************* */
 
@@ -140,7 +140,7 @@ router.post("/recup", authenticate, async (req, res) => {
     }
     const repertoireBucket = `${parent}/${repertoire}`;
 
-    // On cible le n répertoire
+    // On cible le  répertoire
     const [files] = await bucket.getFiles({
       prefix: `${repertoireBucket}/`, // dossier cible
       delimiter: "/", // permet d'éviter de descendre dans des sous-dossiers
