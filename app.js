@@ -9,6 +9,8 @@ var indexRouter = require("./routes/index");
 var authRoutes = require("./routes/auth");
 var usersRouter = require("./routes/users");
 var uploadRouter = require("./routes/upload");
+var cardsRouter = require("./routes/cards");
+
 
 var app = express();
 const fileUpload = require("express-fileupload");
@@ -43,5 +45,7 @@ app.use("/", indexRouter);
 app.use("/users", usersRouter); // pour profile, admin actions...
 app.use("/auth", authRoutes); // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
+app.use("/cards", cardsRouter); // pour profile, admin actions...
+
 
 module.exports = app;
