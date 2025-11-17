@@ -311,6 +311,7 @@ router.post("/login", async (req, res) => {
       email: data.email,
       nom: data.nom,
       prenom: data.prenom,
+      role:data.role,
     });
   } catch (error) {
     // Gestion des erreurs de validation Yup
