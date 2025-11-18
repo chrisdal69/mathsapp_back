@@ -5,7 +5,7 @@ const yup = require("yup");
 const User = require("../models/users");
 const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
-
+ 
 /* DEBUT SIGNUP */
 // VERIFICATION DONNEE RECUES
 const signupSchema = yup.object().shape({
@@ -286,6 +286,7 @@ router.post("/login", async (req, res) => {
     }
     // 3. Génère le JWT access et l'envoie dans un cookie httpOnly
 
+
     const accessToken = jwt.sign(
       {
         userId: data._id,
@@ -299,11 +300,10 @@ router.post("/login", async (req, res) => {
     );
 
     res.cookie("jwt", accessToken, {
-      httpOnly: true,
+      httpOnly: true, // Le cookie n'est pas accessible via JavaScript
       secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      domain:
-        process.env.NODE_ENV === "production" ? ".vercel.app" : "localhost",
+      // pas de maxAge => cookie supprimé à la fermeture de l'onglet
     });
 
     return res.json({
@@ -311,7 +311,7 @@ router.post("/login", async (req, res) => {
       email: data.email,
       nom: data.nom,
       prenom: data.prenom,
-      role: data.role,
+      role:data.role,
     });
   } catch (error) {
     // Gestion des erreurs de validation Yup
