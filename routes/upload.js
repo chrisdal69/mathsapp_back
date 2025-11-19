@@ -1,8 +1,10 @@
 ﻿var express = require("express");
 var router = express.Router();
 const path = require("path");
+const archiver = require("archiver");
 const { Storage } = require("@google-cloud/storage");
-const { authenticate, authorize, verifyToken } = require("../middlewares/auth");
+const { authenticate, authorize, verifyToken,requireAdmin } = require("../middlewares/auth");
+
 
 //GESTION du google Storage
 const NODE_ENV = process.env.NODE_ENV;
@@ -38,7 +40,7 @@ const allowedExtensions = [
 ];
 
 // Liste blanche optionnelle des parents
-const allowedParents = ["ciel1","cloud"];
+const allowedParents = ["ciel1","cloud","python"];
 
 /************************************************************************* */
 
@@ -163,18 +165,142 @@ router.post("/recup", authenticate, async (req, res) => {
     res.json(fileNamesFilter);
   } catch (err) {
     console.error(
-      "Erreur lors de la récupération des fichiers du dossier tp1:",
+      "Erreur lors de la récupération des fichiers du dossier",
       err
     );
     res
       .status(500)
-      .send("Erreur lors de la récupération des fichiers du dossier tp1");
+      .send("Erreur lors de la récupération des fichiers du dossier");
   }
 });
+
+
+/* DEBUT téléchargement ZIP de tout un dossier (admin) */
+
+router.post("/downloadZipA", requireAdmin, async (req, res) => {
+  try {
+    const parent = validatePathComponent(req.body.parent, "Dossier parent");
+    const repertoire = validatePathComponent(
+      req.body.repertoire,
+      "Nom de répertoire"
+    );
+    if (!allowedParents.includes(parent)) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Dossier parent non autorisé" });
+    }
+
+    const prefix = `${parent}/${repertoire}/`;
+    const [files] = await bucket.getFiles({
+      prefix,
+      delimiter: "/",
+    });
+    const fileList = files.filter(
+      (file) => file.name && !file.name.endsWith("/")
+    );
+    if (!fileList.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Aucun fichier à archiver dans ce dossier",
+      });
+    }
+
+    const archiveName = `${repertoire}.zip`.replace(
+      /[^a-zA-Z0-9._-]/g,
+      "_"
+    );
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${archiveName}"`
+    );
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("error", (err) => {
+      console.error("Erreur lors de la création de l'archive :", err);
+      if (!res.headersSent) {
+        res.status(500).end("Erreur lors de la génération du zip");
+      } else {
+        res.end();
+      }
+    });
+
+    archive.pipe(res);
+
+    fileList.forEach((file) => {
+      const relativeName = file.name.startsWith(prefix)
+        ? file.name.slice(prefix.length)
+        : path.basename(file.name);
+      const readStream = bucket.file(file.name).createReadStream();
+      archive.append(readStream, {
+        name: relativeName || path.basename(file.name),
+      });
+    });
+
+    archive.finalize();
+  } catch (err) {
+    console.error("Erreur sur /downloadZipA :", err);
+    res.status(500).json({
+      success: false,
+      message: "Erreur lors de la génération de l'archive",
+      error: err.message,
+    });
+  }
+});
+
+/* FIN téléchargement ZIP de tout un dossier (admin) */
 
 /* FIN  des fichiers qui sont dans le répertoire */
 
 /************************************************************************* */
+
+/* DEBUT Lister tous les fichiers qui sont dans le répertoire (admin) */
+
+router.post("/recupA", requireAdmin, async (req, res) => {
+  try {
+    // Validation des champs name , parent et repertoire
+    const { nom, prenom, email, role } = req.user;
+    const parent = validatePathComponent(req.body.parent, "Dossier parent");
+    const repertoire = validatePathComponent(
+      req.body.repertoire,
+      "Nom de répertoire"
+    );
+    // Whitelist de parent (cohérente avec l'upload)
+    if (!allowedParents.includes(parent)) {
+      return res.status(403).send("Dossier parent non autorisé.");
+    }
+    const repertoireBucket = `${parent}/${repertoire}`;
+
+    // On cible le  répertoire
+    const [files] = await bucket.getFiles({
+      prefix: `${repertoireBucket}/`, // dossier cible
+      delimiter: "/", // permet d'éviter de descendre dans des sous-dossiers
+    });
+
+    // Extraire uniquement les noms de fichiers
+    const fileNames = files.map((file) => {
+      return {
+        name: file.name,
+        url: `https://storage.googleapis.com/${bucketName}/${file.name}`,
+      };
+    });
+ 
+    res.json(fileNames);
+  } catch (err) {
+    console.error(
+      "Erreur lors de la récupération des fichiers du dossier",
+      err
+    );
+    res
+      .status(500)
+      .send("Erreur lors de la récupération des fichiers du dossier");
+  }
+});
+
+/* FIN  liste admin des fichiers qui sont dans le répertoire */
+
+/************************************************************************* */
+
 
 /* DEBUT Récupérer l'upload du front et envoyer les fichiers dans le bucket google */
 // Dossier de stockage dans le bucket
@@ -335,7 +461,7 @@ router.post("/", authenticate, async (req, res) => {
 
 /************************************************************************* */
 
-/* DEBUT supprimer un fichier */
+/* DEBUT supprimer un fichier pour l'admin */
 router.post("/delete", authenticate, async (req, res) => {
   try {
     const { nom, prenom } = req.user;
@@ -356,14 +482,14 @@ router.post("/delete", authenticate, async (req, res) => {
     }
 
     if (!file.startsWith(`${safeName}___`)) {
-      return res.status(403).json({ success: false, message: "AccÃ¨s refusé" });
+      return res.status(403).json({ success: false, message: "Accés refusé" });
     }
 
     const filePath = `${parent}/${repertoire}/${file}`;
     const fileRef = bucket.file(filePath);
     await fileRef.delete();
 
-    console.log(`âœ… Fichier supprimé : ${filePath}`);
+    console.log(`Fichier supprimé : ${filePath}`);
     return res.json({ success: true, message: "Fichier supprimé" });
   } catch (err) {
     console.error("Erreur suppression fichier :", err);
@@ -375,6 +501,47 @@ router.post("/delete", authenticate, async (req, res) => {
   }
 });
 /* FIN supprimer un fichier */
+
+/* DEBUT supprimer un fichier */
+router.post("/deleteA", requireAdmin, async (req, res) => {
+  try {
+    const { nom, prenom } = req.user;
+    const safeName = `${removeSpaces(nom)}${removeSpaces(prenom)}`;
+
+    const parent = validatePathComponent(req.body.parent, "Dossier parent");
+    const repertoire = validatePathComponent(req.body.repertoire, "Nom de répertoire");
+    const file = validateFileName(req.body.file, "Nom de fichier");
+
+    if (!parent || !repertoire || !file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Données manquantes" });
+    }
+
+    if (!allowedParents.includes(parent)) {
+      return res.status(403).json({ success: false, message: "Dossier parent non autorisé" });
+    }
+
+    const filePath = `${parent}/${repertoire}/${file}`;
+    const fileRef = bucket.file(filePath);
+    await fileRef.delete();
+
+    console.log(`Fichier supprimé : ${filePath}`);
+    return res.json({ success: true, message: "Fichier supprimé" });
+  } catch (err) {
+    console.error("Erreur suppression fichier :", err);
+    return res.status(500).json({
+      success: false,
+      message: "Erreur lors de la suppression du fichier",
+      error: err.message,
+    });
+  }
+});
+/* FIN supprimer un fichier pour l'admin */
+
+
+
+
 
 /* DEBUT renommer un fichier */
 router.post("/rename", authenticate, async (req, res) => {
@@ -397,7 +564,7 @@ router.post("/rename", authenticate, async (req, res) => {
       return res.status(403).json({ success: false, message: "Dossier parent non autorisé" });
     }
     if (!oldName.startsWith(`${safeName}___`)) {
-      return res.status(403).json({ success: false, message: "AccÃ¨s refusé" });
+      return res.status(403).json({ success: false, message: "Accés refusé" });
     }
     const ext = path.extname(newName).toLowerCase();
     if (!allowedExtensions.includes(ext)) {
@@ -424,7 +591,7 @@ router.post("/rename", authenticate, async (req, res) => {
     // Supprime lâ€™ancien fichier
     await oldFile.delete();
 
-    console.log(`âœï¸ Fichier renommé : ${oldPath} â†’ ${newPath}`);
+    console.log(`Fichier renommé : ${oldPath} â†’ ${newPath}`);
     return res.json({ success: true, message: "Fichier renommé" });
   } catch (err) {
     console.error("Erreur renommage fichier :", err);
@@ -436,6 +603,67 @@ router.post("/rename", authenticate, async (req, res) => {
   }
 });
 /* FIN renommer un fichier */
+
+/* DEBUT renommer un fichier en admin*/
+router.post("/renameA", requireAdmin, async (req, res) => {
+  try {
+    const { nom, prenom } = req.user;
+    const safeName = `${removeSpaces(nom)}${removeSpaces(prenom)}`;
+
+    const parent = validatePathComponent(req.body.parent, "Dossier parent");
+    const repertoire = validatePathComponent(req.body.repertoire, "Nom de répertoire");
+    const oldName = validateFileName(req.body.oldName, "Ancien nom");
+    const newName = validateFileName(req.body.newName, "Nouveau nom");
+
+    if (!parent || !repertoire || !oldName || !newName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Données manquantes" });
+    }
+
+    if (!allowedParents.includes(parent)) {
+      return res.status(403).json({ success: false, message: "Dossier parent non autorisé" });
+    }
+   
+    const ext = path.extname(newName).toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+      return res.status(400).json({ success: false, message: "Extension non autorisée" });
+    }
+
+    const oldPath = `${parent}/${repertoire}/${oldName}`;
+    const racine = oldName.split('___')[0];
+    const newPath = `${parent}/${repertoire}/${racine}___${newName}`;
+    
+    const oldFile = bucket.file(oldPath);
+    const newFile = bucket.file(newPath);
+
+    // Vérifie si lâ€™ancien fichier existe
+    const [exists] = await oldFile.exists();
+    if (!exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Fichier introuvable" });
+    }
+
+    // Copie vers le nouveau nom
+    await oldFile.copy(newFile);
+    // Supprime lâ€™ancien fichier
+    await oldFile.delete();
+
+    console.log(`Fichier renommé : ${oldPath} â†’ ${newPath}`);
+    return res.json({ success: true, message: "Fichier renommé" });
+  } catch (err) {
+    console.error("Erreur renommage fichier :", err);
+    return res.status(500).json({
+      success: false,
+      message: "Erreur lors du renommage du fichier",
+      error: err.message,
+    });
+  }
+});
+/* FIN renommer un fichier en admin */
+
+
 
 /* DEBUT exemple route pour utiliser veriyToken */
 
