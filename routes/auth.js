@@ -533,7 +533,7 @@ router.post("/reset-password", async (req, res) => {
     if (!isMatch) {
       return res
         .status(400)
-        .json({ error: "Code incorrect : Retour et réessayer !" });
+        .json({ error: "Code saisi précédemment incorrect : Retour et réessayer !" });
     }
     // ✅ Active le compte
     const hashedPassword = await bcrypt.hash(newPassword, 10);
