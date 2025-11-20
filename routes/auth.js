@@ -5,7 +5,7 @@ const yup = require("yup");
 const User = require("../models/users");
 const bcrypt = require("bcrypt");
 const nodemailer = require("nodemailer");
- 
+
 /* DEBUT SIGNUP */
 // VERIFICATION DONNEE RECUES
 const signupSchema = yup.object().shape({
@@ -96,8 +96,16 @@ router.post("/signup", async (req, res) => {
       from: process.env.GMAIL_USER,
       to: email,
       subject: "Inscription MathsApp - Vérification de l’email",
-      text: `Bonjour ${prenom},\n\nVotre code de vérification est : ${codeAlea}\n\nCe code expire dans 10 minutes.`,
+      text: `Bonjour ${prenom},\n\nVotre code de vérification est : ${codeAlea}\nFaire la différence entre majuscule et micuscule\nCe code expire dans 10 minutes.`,
+      html: `<div style="font-family: Arial, sans-serif; font-size:16px; line-height:1.6;">
+    <p>Bonjour ${prenom},</p>
+    <p>Votre code de vérification est :</p>
+    <div style="font-size:28px; font-weight:bold; letter-spacing:3px;">${codeAlea}</div>
+    <p>Faire la différence entre majuscule et minuscule.</p>
+    <p>Ce code expire dans 10 minutes.</p>
+  </div>`,
     };
+
     const info = await transporter.sendMail(mailOptions);
 
     // 3️⃣ Hash du mot de passe
@@ -229,12 +237,21 @@ router.post("/resend-code", async (req, res) => {
     );
     console.log("code dans /resend-code : ", newCode);
     // 6️⃣ Envoie du nouveau mail
+
     const mailOptions = {
       from: process.env.GMAIL_USER,
       to: email,
-      subject: "Nouveau code de vérification - MathsApp",
-      text: `Bonjour,\n\nVoici votre nouveau code de vérification : ${newCode}\nCe code expire dans 10 minutes.`,
+      subject: "Inscription MathsApp - Vérification de l’email",
+      text: `Bonjour,\n\nVotre code de vérification est : ${newCode}\nFaire la différence entre majuscule et micuscule\nCe code expire dans 10 minutes.`,
+      html: `<div style="font-family: Arial, sans-serif; font-size:16px; line-height:1.6;">
+    <p>Bonjour,</p>
+    <p>Votre code de vérification est :</p>
+    <div style="font-size:28px; font-weight:bold; letter-spacing:3px;">${newCode}</div>
+    <p>Faire la différence entre majuscule et minuscule.</p>
+    <p>Ce code expire dans 10 minutes.</p>
+  </div>`,
     };
+
     await transporter.sendMail(mailOptions);
 
     return res.status(200).json({
@@ -286,7 +303,6 @@ router.post("/login", async (req, res) => {
     }
     // 3. Génère le JWT access et l'envoie dans un cookie httpOnly
 
-
     const accessToken = jwt.sign(
       {
         userId: data._id,
@@ -311,7 +327,7 @@ router.post("/login", async (req, res) => {
       email: data.email,
       nom: data.nom,
       prenom: data.prenom,
-      role:data.role,
+      role: data.role,
     });
   } catch (error) {
     // Gestion des erreurs de validation Yup
@@ -394,12 +410,21 @@ router.post("/forgot", async (req, res) => {
         },
       }
     );
+
     const mailOptions = {
       from: process.env.GMAIL_USER,
       to: email,
-      subject: "MathsApp - Réinitialisation du mot de passe",
-      text: `Bonjour ${prenom},\n\nVotre code de réinitialisation est : ${codeAlea}\n\nCe code expire dans 10 minutes.`,
+      subject: "Inscription MathsApp - Vérification de l’email",
+      text: `Bonjour ${prenom},\n\nVotre code de vérification est : ${codeAlea}\nFaire la différence entre majuscule et micuscule\nCe code expire dans 10 minutes.`,
+      html: `<div style="font-family: Arial, sans-serif; font-size:16px; line-height:1.6;">
+    <p>Bonjour ${prenom},</p>
+    <p>Votre code de vérification est :</p>
+    <div style="font-size:28px; font-weight:bold; letter-spacing:3px;">${codeAlea}</div>
+    <p>Faire la différence entre majuscule et minuscule.</p>
+    <p>Ce code expire dans 10 minutes.</p>
+  </div>`,
     };
+
     const info = await transporter.sendMail(mailOptions);
 
     // 5️⃣ Réponse OK
@@ -459,8 +484,15 @@ router.post("/resend-forgot", async (req, res) => {
     const mailOptions = {
       from: process.env.GMAIL_USER,
       to: email,
-      subject: "Nouveau code de vérification - MathsApp",
-      text: `Bonjour,\n\nVoici votre nouveau code de vérification : ${newCode}\nCe code expire dans 10 minutes.`,
+      subject: "Inscription MathsApp - Vérification de l’email",
+      text: `Bonjour,\n\nVotre code de vérification est : ${newCode}\nFaire la différence entre majuscule et micuscule\nCe code expire dans 10 minutes.`,
+      html: `<div style="font-family: Arial, sans-serif; font-size:16px; line-height:1.6;">
+    <p>Bonjour,</p>
+    <p>Votre code de vérification est :</p>
+    <div style="font-size:28px; font-weight:bold; letter-spacing:3px;">${newCode}</div>
+    <p>Faire la différence entre majuscule et minuscule.</p>
+    <p>Ce code expire dans 10 minutes.</p>
+  </div>`,
     };
     await transporter.sendMail(mailOptions);
 
