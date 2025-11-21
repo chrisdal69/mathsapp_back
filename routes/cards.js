@@ -206,6 +206,19 @@ const sanitizeFileBaseName = (rawName, extension) => {
   return { ext, base: base || "fichier" };
 };
 
+const resolveArrayInsertIndex = (list, position) => {
+  const length = Array.isArray(list) ? list.length : 0;
+  if (position === "start") return 0;
+  if (position === "end" || typeof position === "undefined" || position === null) {
+    return length;
+  }
+  const numeric = Number(position);
+  if (!Number.isNaN(numeric)) {
+    return Math.max(0, Math.min(length, numeric + 1));
+  }
+  return length;
+};
+
 const extractSingleFile = (files) => {
   if (!files || typeof files !== "object") {
     return null;
@@ -438,13 +451,22 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
       console.warn("Impossible de rendre le fichier public imm\u00e9diatement", err);
     }
 
+    const listPosition = resolveArrayInsertIndex(card.fichiers, req.body?.position);
+    const normalizedPosition = Number.isFinite(listPosition)
+      ? Math.trunc(listPosition)
+      : null;
     const updateQuery = {
       _id: card._id,
       repertoire: card.repertoire,
       num: card.num,
     };
     const update = {
-      $push: { fichiers: { txt: description, href: uniqueName } },
+      $push: {
+        fichiers: {
+          $each: [{ txt: description, href: uniqueName }],
+          ...(Number.isFinite(normalizedPosition) ? { $position: normalizedPosition } : {}),
+        },
+      },
     };
     const updatedCard = await Card.findOneAndUpdate(updateQuery, update, {
       new: true,
