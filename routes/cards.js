@@ -20,6 +20,28 @@ if (NODE_ENV === "production") {
 const bucketName = "mathsapp";
 const bucket = storage.bucket(bucketName);
 const allowedBgExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]);
+const allowedFileExtensions = new Set([
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".csv",
+  ".txt",
+  ".md",
+  ".py",
+  ".zip",
+  ".rar",
+  ".7z",
+  ".ppt",
+  ".pptx",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".svg",
+  ".webp",
+]);
 const toBlurFileName = (filename) => {
   if (!filename || typeof filename !== "string") {
     return null;
@@ -171,6 +193,17 @@ const normalizeTagNumber = (value) => {
     return null;
   }
   return parsed;
+};
+
+const sanitizeFileBaseName = (rawName, extension) => {
+  const ext = typeof extension === "string" ? extension : path.extname(rawName || "").toLowerCase();
+  const base = path
+    .basename(rawName || "fichier", ext)
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  return { ext, base: base || "fichier" };
 };
 
 const extractSingleFile = (files) => {
@@ -333,6 +366,102 @@ router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("POST /cards/:id/bg/upload", err);
     res.status(500).json({ error: "Erreur lors de l'upload de l'image." });
+  }
+});
+
+router.post("/:id/files", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const descriptionRaw =
+      (req.body && (req.body.description || req.body.txt)) || "";
+    const description =
+      typeof descriptionRaw === "string" ? descriptionRaw.trim() : "";
+    if (!description) {
+      return res.status(400).json({ error: "Le descriptif est obligatoire." });
+    }
+
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ error: "Aucun fichier fourni." });
+    }
+
+    const uploadedFile = extractSingleFile(req.files);
+    if (!uploadedFile || !uploadedFile.data) {
+      return res.status(400).json({ error: "Fichier d'upload invalide." });
+    }
+
+    const rawExtension = path.extname(uploadedFile.name || "").toLowerCase();
+    const { ext, base } = sanitizeFileBaseName(uploadedFile.name, rawExtension);
+    if (!ext || !allowedFileExtensions.has(ext)) {
+      return res.status(400).json({ error: "Extension de fichier non autoris\u00e9e." });
+    }
+
+    if (uploadedFile.size && uploadedFile.size > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: "Fichier trop volumineux (10 Mo max)." });
+    }
+
+    const targetRepertoire =
+      (req.body && req.body.repertoire) || card.repertoire;
+    let sanitizedRepertoire;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(targetRepertoire, "R\u00e9pertoire");
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "R\u00e9pertoire manquant." });
+    }
+
+    const rawNum =
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "num")
+        ? req.body.num
+        : card.num;
+    const tagNumber = normalizeTagNumber(rawNum);
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Num\u00e9ro de tag invalide." });
+    }
+    const normalizedTagNumber = Math.trunc(tagNumber);
+
+    const uniqueName = `${base}_${Date.now()}${ext}`;
+    const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${uniqueName}`;
+    const fileRef = bucket.file(objectPath);
+
+    await uploadBufferToBucket(fileRef, uploadedFile.data, uploadedFile.mimetype);
+    try {
+      await fileRef.makePublic();
+    } catch (err) {
+      console.warn("Impossible de rendre le fichier public imm\u00e9diatement", err);
+    }
+
+    const updateQuery = {
+      _id: card._id,
+      repertoire: card.repertoire,
+      num: card.num,
+    };
+    const update = {
+      $push: { fichiers: { txt: description, href: uniqueName } },
+    };
+    const updatedCard = await Card.findOneAndUpdate(updateQuery, update, {
+      new: true,
+    }).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s upload." });
+    }
+
+    res.json({
+      result: updatedCard,
+      fileName: uniqueName,
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+    });
+  } catch (err) {
+    console.error("POST /cards/:id/files", err);
+    res.status(500).json({ error: "Erreur lors de l'upload du fichier." });
   }
 });
 
