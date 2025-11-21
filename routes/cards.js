@@ -61,7 +61,26 @@ router.get("/", async (req, res) => {
       return res.status(404).json({ error: "Aucune carte trouvée." });
     }
     
-    res.json({ result });
+    const sanitized = result.map((card) => {
+      if (!Array.isArray(card.quizz)) return card;
+      return {
+        ...card,
+        quizz: card.quizz.map((q) => {
+          const base = {
+            id: q.id,
+            question: q.question,
+            image: q.image,
+            options: Array.isArray(q.options) ? q.options : [],
+          };
+          if (card.evalQuizz === "non") {
+            return { ...base, correct: q.correct };
+          }
+          return base;
+        }),
+      };
+    });
+
+    res.json({ result: sanitized });
   } catch (err) {
     console.error("GET /cards", err);
     res.status(500).json({ error: "Erreur serveur." });
