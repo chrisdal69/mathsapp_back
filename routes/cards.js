@@ -60,7 +60,6 @@ router.get("/", async (req, res) => {
     if (!result.length) {
       return res.status(404).json({ error: "Aucune carte trouvée." });
     }
-
     res.json({ result });
   } catch (err) {
     console.error("GET /cards", err);

@@ -25,6 +25,7 @@ const cardSchema = new mongoose.Schema({
   fichiers: [hrefSchema],
   quizz:[quizzSchema],
   video:[hrefSchema],
+  evalQuizz:String,
 });
 
 module.exports = mongoose.model("Card", cardSchema);

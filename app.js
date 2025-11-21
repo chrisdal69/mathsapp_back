@@ -10,6 +10,8 @@ var authRoutes = require("./routes/auth");
 var usersRouter = require("./routes/users");
 var uploadRouter = require("./routes/upload");
 var cardsRouter = require("./routes/cards");
+var quizzsRouter = require("./routes/quizzs");
+
 
 
 var app = express();
@@ -46,6 +48,7 @@ app.use("/users", usersRouter); // pour profile, admin actions...
 app.use("/auth", authRoutes); // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
 app.use("/cards", cardsRouter); // pour profile, admin actions...
+app.use("/quizzs", quizzsRouter); // pour enregistrements des résultats de quizz...
 
 
 module.exports = app;

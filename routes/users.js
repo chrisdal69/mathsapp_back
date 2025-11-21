@@ -6,17 +6,6 @@ const yup = require("yup");
 const bcrypt = require("bcrypt");
 
 
-// router.get("/profile", authenticate, (req, res) => {
-//   res.json({ message: "Profil utilisateur", user: req.user });
-// });
-
-// // Exemple réservé aux admins
-// router.delete("/:id", authenticate, authorize("admin"), async (req, res) => {
-//   await User.findByIdAndDelete(req.params.id);
-//   res.json({ message: "Utilisateur supprimé" });
-// });
-
-
 /* DEBUT info utilisateur */
 router.get("/me", authenticate, (req, res) => {
   const { email, nom, prenom, role } = req.user;
