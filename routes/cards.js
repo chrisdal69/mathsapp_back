@@ -219,6 +219,13 @@ const resolveArrayInsertIndex = (list, position) => {
   return length;
 };
 
+const isSafeFileName = (value) => {
+  if (!value || typeof value !== "string") return false;
+  if (value.length > 200) return false;
+  if (value.includes("/") || value.includes("\\") || value.includes("..")) return false;
+  return true;
+};
+
 const extractSingleFile = (files) => {
   if (!files || typeof files !== "object") {
     return null;
@@ -484,6 +491,65 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("POST /cards/:id/files", err);
     res.status(500).json({ error: "Erreur lors de l'upload du fichier." });
+  }
+});
+
+router.delete("/:id/files", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const targetHref = (req.body && req.body.href ? `${req.body.href}` : "").trim();
+
+  if (!targetHref) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(targetHref)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const sanitizedRepertoire = sanitizeStorageSegment(card.repertoire, "R\u00e9pertoire");
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "R\u00e9pertoire manquant." });
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Num\u00e9ro de tag invalide." });
+    }
+    const normalizedTagNumber = Math.trunc(tagNumber);
+
+    const existsInCard = Array.isArray(card.fichiers)
+      ? card.fichiers.some((f) => f && f.href === targetHref)
+      : false;
+    if (!existsInCard) {
+      return res.status(404).json({ error: "Fichier non trouv\u00e9 dans la carte." });
+    }
+
+    const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${targetHref}`;
+    try {
+      const fileRef = bucket.file(objectPath);
+      await fileRef.delete({ ignoreNotFound: true });
+    } catch (err) {
+      console.warn("Suppression fichier bucket \u00e9chou\u00e9e", err);
+    }
+
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num },
+      { $pull: { fichiers: { href: targetHref } } },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s suppression." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("DELETE /cards/:id/files", err);
+    res.status(500).json({ error: "Erreur lors de la suppression du fichier." });
   }
 });
 
