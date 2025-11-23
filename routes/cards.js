@@ -572,4 +572,49 @@ router.delete("/:id/files", requireAdmin, async (req, res) => {
   }
 });
 
+router.patch("/:id/files", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const targetHref = (req.body && req.body.href ? `${req.body.href}` : "").trim();
+  const rawTxt = (req.body && req.body.txt ? `${req.body.txt}` : "").trim();
+
+  if (!targetHref) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(targetHref)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+  if (!rawTxt) {
+    return res.status(400).json({ error: "Le descriptif est obligatoire." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const existsInCard = Array.isArray(card.fichiers)
+      ? card.fichiers.some((f) => f && f.href === targetHref)
+      : false;
+    if (!existsInCard) {
+      return res.status(404).json({ error: "Fichier non trouv\u00e9 dans la carte." });
+    }
+
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num, "fichiers.href": targetHref },
+      { $set: { "fichiers.$.txt": rawTxt } },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/files", err);
+    res.status(500).json({ error: "Erreur lors de la mise \u00e0 jour du fichier." });
+  }
+});
+
 module.exports = router;
