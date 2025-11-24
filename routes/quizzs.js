@@ -1,9 +1,26 @@
 const express = require("express");
 const router = express.Router();
+const path = require("path");
 const yup = require("yup");
-const { authenticate } = require("../middlewares/auth");
+const { Storage } = require("@google-cloud/storage");
+const { authenticate, requireAdmin } = require("../middlewares/auth");
 const Quizz = require("../models/quizzs");
 const Card = require("../models/cards");
+
+const NODE_ENV = process.env.NODE_ENV;
+let storage;
+if (NODE_ENV === "production") {
+  const serviceAccount = JSON.parse(process.env.GCP_KEY);
+  storage = new Storage({
+    projectId: serviceAccount.project_id,
+    credentials: serviceAccount,
+  });
+} else {
+  storage = new Storage({ keyFilename: "config/gcs-key.json" });
+}
+const bucketName = "mathsapp";
+const bucket = storage.bucket(bucketName);
+const allowedImageExtensions = new Set([".jpg", ".jpeg", ".png"]);
 
 const quizzSaveSchema = yup.object().shape({
   cardId: yup.string().trim().required("cardId requis"),
@@ -13,6 +30,101 @@ const quizzSaveSchema = yup.object().shape({
     .min(1, "Aucune reponse fournie")
     .required("Reponses requises"),
 });
+
+const sanitizeStorageSegment = (value, label) => {
+  if (!value || typeof value !== "string") {
+    return null;
+  }
+  const cleaned = value.trim();
+  if (!cleaned || cleaned.length > 60) {
+    throw new Error(`${label} invalide.`);
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(cleaned)) {
+    throw new Error(`${label} invalide.`);
+  }
+  return cleaned;
+};
+
+const normalizeTagNumber = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.trunc(parsed);
+};
+
+const extractSingleFile = (files) => {
+  if (!files || typeof files !== "object") {
+    return null;
+  }
+  const candidates = ["file", "image", "bg", "upload"];
+  for (const key of candidates) {
+    if (files[key]) {
+      return Array.isArray(files[key]) ? files[key][0] : files[key];
+    }
+  }
+  const values = Object.values(files);
+  if (!values.length) {
+    return null;
+  }
+  const first = values[0];
+  return Array.isArray(first) ? first[0] : first;
+};
+
+const uploadBufferToBucket = (fileRef, buffer, mimetype) =>
+  new Promise((resolve, reject) => {
+    const stream = fileRef.createWriteStream({
+      metadata: { contentType: mimetype || "application/octet-stream" },
+      resumable: false,
+    });
+    stream.on("error", (err) => reject(err));
+    stream.on("finish", resolve);
+    stream.end(buffer);
+  });
+
+const sanitizeQuizzArray = (value) => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return value.map((q, idx) => {
+    const opts = Array.isArray(q?.options)
+      ? q.options.map((o) =>
+          typeof o === "string" ? o : o === null || o === undefined ? "" : `${o}`
+        )
+      : [];
+    const normalizedCorrect =
+      q && Object.prototype.hasOwnProperty.call(q, "correct")
+        ? Number.isInteger(q.correct)
+          ? q.correct
+          : null
+        : null;
+    return {
+      id: q?.id || `q${idx + 1}`,
+      question: typeof q?.question === "string" ? q.question : "",
+      image: typeof q?.image === "string" ? q.image : "",
+      options: opts,
+      correct: normalizedCorrect,
+    };
+  });
+};
+
+const sanitizeFileBaseName = (rawName, extension) => {
+  const ext = typeof extension === "string" ? extension : path.extname(rawName || "").toLowerCase();
+  const base = path
+    .basename(rawName || "image", ext)
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  return { base: base || "image", ext };
+};
+
+const isSafeFileName = (value) => {
+  if (!value || typeof value !== "string") return false;
+  if (value.length > 200) return false;
+  if (value.includes("/") || value.includes("\\") || value.includes("..")) return false;
+  return true;
+};
 
 router.get("/historique", authenticate, async (req, res) => {
   try {
@@ -167,6 +279,236 @@ router.post("/", authenticate, async (req, res) => {
     }
     console.error("Erreur route /quizzs :", error);
     return res.status(500).json({ message: "Erreur serveur." });
+  }
+});
+
+router.patch("/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const normalizedQuizz = sanitizeQuizzArray((req.body || {}).quizz);
+    if (!normalizedQuizz) {
+      return res.status(400).json({ error: "Le quizz doit etre un tableau." });
+    }
+    const reindexedQuizz = normalizedQuizz.map((q, idx) => ({
+      ...q,
+      id: `q${idx + 1}`,
+    }));
+
+    const update = { quizz: reindexedQuizz };
+    const rawEval = (req.body && req.body.evalQuizz) || null;
+    if (rawEval !== null) {
+      const val = typeof rawEval === "string" ? rawEval.trim() : "";
+      if (!["oui", "non", "attente"].includes(val)) {
+        return res.status(400).json({ error: "Valeur evalQuizz invalide." });
+      }
+      update.evalQuizz = val;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "resultatQuizz")) {
+      update.resultatQuizz = !!req.body.resultatQuizz;
+    }
+
+    const updatedCard = await Card.findByIdAndUpdate(id, update, {
+      new: true,
+    }).lean();
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (error) {
+    console.error("PATCH /quizzs/:id", error);
+    return res.status(500).json({ error: "Erreur lors de la mise a jour." });
+  }
+});
+
+router.post("/:id/image", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const questionId = (req.body && req.body.questionId) || "";
+    if (!questionId) {
+      return res.status(400).json({ error: "questionId requis." });
+    }
+
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ error: "Aucun fichier fourni." });
+    }
+
+    const file = extractSingleFile(req.files);
+    if (!file || !file.data) {
+      return res.status(400).json({ error: "Fichier invalide." });
+    }
+    const extension = path.extname(file.name || "").toLowerCase();
+    if (!allowedImageExtensions.has(extension)) {
+      return res.status(400).json({ error: "Extension d'image non autorisee." });
+    }
+
+    const targetRepertoire =
+      (req.body && req.body.repertoire) || card.repertoire;
+    let sanitizedRepertoire;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "Repertoire"
+      );
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+
+    const tagNumber = normalizeTagNumber(
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "num")
+        ? req.body.num
+        : card.num
+    );
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+
+    const { base, ext } = sanitizeFileBaseName(file.name, extension);
+    const uniqueName = `${base}_${Date.now()}${ext}`;
+    const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesQuizz/${uniqueName}`;
+    const fileRef = bucket.file(objectPath);
+
+    const normalizedQuizz = sanitizeQuizzArray(card.quizz || []);
+    const targetQuestion =
+      normalizedQuizz?.find((q) => q && q.id === questionId) || null;
+    if (!targetQuestion) {
+      return res.status(404).json({ error: "Question introuvable." });
+    }
+
+    if (targetQuestion.image) {
+      const safeName = targetQuestion.image;
+      if (isSafeFileName(safeName)) {
+        const previousFile = bucket.file(
+          `${sanitizedRepertoire}/tag${tagNumber}/imagesQuizz/${safeName}`
+        );
+        previousFile
+          .delete({ ignoreNotFound: true })
+          .catch((err) =>
+            console.warn("Suppression ancienne image quizz echouee", err)
+          );
+      }
+    }
+
+    await uploadBufferToBucket(fileRef, file.data, file.mimetype);
+    try {
+      await fileRef.makePublic();
+    } catch (err) {
+      console.warn("Impossible de rendre l'image publique immediatement", err);
+    }
+
+    const nextQuizz = normalizedQuizz.map((q, idx) => ({
+      ...q,
+      id: `q${idx + 1}`,
+      image: q.id === questionId ? uniqueName : q.image || "",
+    }));
+
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { quizz: nextQuizz },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres upload." });
+    }
+
+    return res.json({
+      result: updatedCard,
+      fileName: uniqueName,
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+    });
+  } catch (error) {
+    console.error("POST /quizzs/:id/image", error);
+    return res.status(500).json({ error: "Erreur lors de l'upload de l'image." });
+  }
+});
+
+router.delete("/:id/image", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const questionId = (req.body && req.body.questionId) || "";
+    const image = (req.body && req.body.image) || "";
+    if (!questionId || !image) {
+      return res.status(400).json({ error: "questionId et image requis." });
+    }
+    if (!isSafeFileName(image)) {
+      return res.status(400).json({ error: "Nom de fichier invalide." });
+    }
+
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const targetRepertoire =
+      (req.body && req.body.repertoire) || card.repertoire;
+    let sanitizedRepertoire;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "Repertoire"
+      );
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+    const tagNumber = normalizeTagNumber(
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "num")
+        ? req.body.num
+        : card.num
+    );
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+
+    const normalizedQuizz = sanitizeQuizzArray(card.quizz || []);
+    const exists = normalizedQuizz.some(
+      (q) => q && q.id === questionId && q.image === image
+    );
+    if (!exists) {
+      return res.status(404).json({ error: "Image non trouvee dans le quizz." });
+    }
+
+    const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesQuizz/${image}`;
+    try {
+      await bucket.file(objectPath).delete({ ignoreNotFound: true });
+    } catch (err) {
+      console.warn("Suppression image quizz echouee", err);
+    }
+
+    const nextQuizz = normalizedQuizz.map((q, idx) => ({
+      ...q,
+      id: `q${idx + 1}`,
+      image: q.id === questionId ? "" : q.image,
+    }));
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { quizz: nextQuizz },
+      { new: true }
+    ).lean();
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres suppression." });
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (error) {
+    console.error("DELETE /quizzs/:id/image", error);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression de l'image." });
   }
 });
 
