@@ -175,6 +175,105 @@ router.get("/historique", authenticate, async (req, res) => {
 
 
 
+
+router.get("/:id/results", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const card = await Card.findById(id).select("quizz").lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const questionCount = Array.isArray(card.quizz) ? card.quizz.length : 0;
+    const submissions = await Quizz.find({ id_card: id }).select("reponses").lean();
+
+    const totalSubmissions = submissions.length;
+    const correctCounts = Array.from({ length: questionCount }, () => 0);
+
+    submissions.forEach((entry) => {
+      const reps = Array.isArray(entry?.reponses) ? entry.reponses : [];
+      for (let i = 0; i < questionCount; i += 1) {
+        if (reps[i] === 1) {
+          correctCounts[i] += 1;
+        }
+      }
+    });
+
+    return res.json({ totalSubmissions, correctCounts });
+  } catch (error) {
+    console.error("GET /quizzs/:id/results", error);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors du chargement des resultats." });
+  }
+});
+
+
+router.get("/:id/results/export", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const card = await Card.findById(id).select("quizz titre num repertoire").lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const totalQuestions = Array.isArray(card.quizz) ? card.quizz.length : 0;
+    const submissions = await Quizz.find({ id_card: id })
+      .populate({ path: "id_user", select: "prenom nom" })
+      .select("reponses id_user")
+      .lean();
+
+    const escapeCsv = (val) => {
+      const str = `${val ?? ""}`;
+      const escaped = str.replace(/"/g, '""');
+      return /[";\\,\\n]/.test(escaped) ? `"${escaped}"` : escaped;
+    };
+
+    const rows = submissions.map((entry) => {
+      const user = entry?.id_user || {};
+      const prenom = user.prenom || "";
+      const nom = user.nom || "";
+      const score = Array.isArray(entry?.reponses)
+        ? entry.reponses.reduce((sum, val) => sum + (Number(val) === 1 ? 1 : 0), 0)
+        : 0;
+      const total = totalQuestions || (Array.isArray(entry?.reponses) ? entry.reponses.length : 0);
+      return { prenom, nom, score, total };
+    });
+
+    const header = ["quizz", "num", "repertoire"].join(";");
+    const metaLine = [
+      escapeCsv(card.titre || `quizz_${id}`),
+      escapeCsv(card.num ?? ""),
+      escapeCsv(card.repertoire ?? ""),
+    ].join(";");
+    const bodyHeader = ["prenom", "nom", "bonnes_reponses", "nombre_questions"].join(";");
+    const body = rows
+      .map((r) => [escapeCsv(r.prenom), escapeCsv(r.nom), escapeCsv(r.score), escapeCsv(r.total || totalQuestions)].join(";"))
+      .join("\n");
+    const csv = [header, metaLine, bodyHeader, body].filter(Boolean).join("\n");
+
+    const safeTitle = [
+      "quizz",
+      (card.num ?? "").toString().trim() || `${id}`,
+      (card.repertoire ?? "").toString().trim(),
+    ]
+      .filter(Boolean)
+      .join("_")
+      .replace(/[^a-zA-Z0-9_-]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.csv"`);
+    return res.status(200).send(csv);
+  } catch (error) {
+    console.error("GET /quizzs/:id/results/export", error);
+    return res.status(500).json({ error: "Erreur lors de l'export des resultats." });
+  }
+});
+
 router.post("/", authenticate, async (req, res) => {
   try {
     const { cardId, reponses } = await quizzSaveSchema.validate(req.body, {
