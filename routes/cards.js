@@ -238,6 +238,14 @@ const resolveArrayInsertIndex = (list, position) => {
   return length;
 };
 
+const sanitizeVideoArray = (list) =>
+  Array.isArray(list)
+    ? list.map((v) => ({
+        txt: typeof v?.txt === "string" ? v.txt.trim() : "",
+        href: typeof v?.href === "string" ? v.href.trim() : "",
+      }))
+    : [];
+
 const isSafeFileName = (value) => {
   if (!value || typeof value !== "string") return false;
   if (value.length > 200) return false;
@@ -614,6 +622,126 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("PATCH /cards/:id/files", err);
     res.status(500).json({ error: "Erreur lors de la mise \u00e0 jour du fichier." });
+  }
+});
+
+router.post("/:id/video", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const position = req.body?.position;
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const currentList = sanitizeVideoArray(card.video);
+    const insertIndex = resolveArrayInsertIndex(currentList, position);
+    const normalizedIndex = Math.max(0, Math.min(currentList.length, insertIndex));
+    const next = [...currentList];
+    next.splice(normalizedIndex, 0, { txt: "", href: "" });
+
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num },
+      { video: next },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s ajout." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("POST /cards/:id/video", err);
+    res.status(500).json({ error: "Erreur lors de l'ajout de la video." });
+  }
+});
+
+router.delete("/:id/video", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const index = Number.isInteger(req.body?.index)
+    ? req.body.index
+    : Number(req.body?.index);
+
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: "Indice de video invalide." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+    const list = Array.isArray(card.video) ? card.video : [];
+    if (index >= list.length) {
+      return res.status(404).json({ error: "Video introuvable." });
+    }
+
+    const next = list.filter((_, idx) => idx !== index);
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num },
+      { video: next },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s suppression." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("DELETE /cards/:id/video", err);
+    res.status(500).json({ error: "Erreur lors de la suppression de la video." });
+  }
+});
+
+router.patch("/:id/video", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const index = Number.isInteger(req.body?.index)
+    ? req.body.index
+    : Number(req.body?.index);
+  const hasTxt = Object.prototype.hasOwnProperty.call(req.body || {}, "txt");
+  const hasHref = Object.prototype.hasOwnProperty.call(req.body || {}, "href");
+
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: "Indice de video invalide." });
+  }
+  if (!hasTxt && !hasHref) {
+    return res.status(400).json({ error: "Aucune modification fournie." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const list = sanitizeVideoArray(card.video);
+    if (index >= list.length) {
+      return res.status(404).json({ error: "Video introuvable." });
+    }
+
+    const current = list[index] || { txt: "", href: "" };
+    list[index] = {
+      txt: hasTxt ? (req.body.txt || "").trim() : current.txt || "",
+      href: hasHref ? (req.body.href || "").trim() : current.href || "",
+    };
+
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num },
+      { video: list },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/video", err);
+    res.status(500).json({ error: "Erreur lors de la mise \u00e0 jour de la video." });
   }
 });
 
