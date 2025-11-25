@@ -285,6 +285,11 @@ router.post("/", authenticate, async (req, res) => {
 router.patch("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
     const normalizedQuizz = sanitizeQuizzArray((req.body || {}).quizz);
     if (!normalizedQuizz) {
       return res.status(400).json({ error: "Le quizz doit etre un tableau." });
@@ -293,6 +298,36 @@ router.patch("/:id", requireAdmin, async (req, res) => {
       ...q,
       id: `q${idx + 1}`,
     }));
+
+    // Nettoyage des images orphelines (questions supprimées)
+    const existingQuizz = sanitizeQuizzArray(card.quizz || []) || [];
+    const existingImages = new Set(
+      existingQuizz.map((q) => (q && typeof q.image === "string" ? q.image : "")).filter(Boolean)
+    );
+    const nextImages = new Set(
+      reindexedQuizz.map((q) => (q && typeof q.image === "string" ? q.image : "")).filter(Boolean)
+    );
+
+    const imagesToDelete = [...existingImages].filter((img) => img && !nextImages.has(img) && isSafeFileName(img));
+
+    if (imagesToDelete.length) {
+      try {
+        const sanitizedRepertoire = sanitizeStorageSegment(card.repertoire, "Repertoire");
+        const tagNumber = normalizeTagNumber(card.num);
+        if (sanitizedRepertoire && tagNumber !== null) {
+          await Promise.all(
+            imagesToDelete.map((img) =>
+              bucket
+                .file(`${sanitizedRepertoire}/tag${tagNumber}/imagesQuizz/${img}`)
+                .delete({ ignoreNotFound: true })
+                .catch((err) => console.warn("Suppression image quizz orpheline échouée", err))
+            )
+          );
+        }
+      } catch (cleanupErr) {
+        console.warn("Nettoyage images orphelines quizz échoué", cleanupErr);
+      }
+    }
 
     const update = { quizz: reindexedQuizz };
     const rawEval = (req.body && req.body.evalQuizz) || null;
@@ -307,13 +342,7 @@ router.patch("/:id", requireAdmin, async (req, res) => {
       update.resultatQuizz = !!req.body.resultatQuizz;
     }
 
-    const updatedCard = await Card.findByIdAndUpdate(id, update, {
-      new: true,
-    }).lean();
-    if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable." });
-    }
-
+    const updatedCard = await Card.findByIdAndUpdate(id, update, { new: true }).lean();
     return res.json({ result: updatedCard });
   } catch (error) {
     console.error("PATCH /quizzs/:id", error);
