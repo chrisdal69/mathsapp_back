@@ -87,6 +87,22 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/admin",requireAdmin, async (req, res) => {
+  try {
+    const result = await Card.find().sort({ num: -1 }).lean().exec();
+
+    if (!result.length) {
+      return res.status(404).json({ error: "Aucune carte trouvée." });
+    }  
+
+    res.json({ result });
+  } catch (err) {
+    console.error("GET /cards/admin", err);
+    res.status(500).json({ error: "Erreur serveur." });
+  }
+});
+
+
 router.patch("/:id/title", requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { titre } = req.body || {};
