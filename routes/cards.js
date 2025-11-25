@@ -102,6 +102,54 @@ router.get("/admin",requireAdmin, async (req, res) => {
   }
 });
 
+router.post("/admin", requireAdmin, async (req, res) => {
+  const repertoire = (req.body?.repertoire || "").trim();
+  const parsedNum = Number(req.body?.num);
+
+  if (!repertoire) {
+    return res.status(400).json({ error: "Repertoire manquant." });
+  }
+
+  try {
+    let nextNum;
+    if (Number.isFinite(parsedNum)) {
+      nextNum = Math.trunc(parsedNum);
+    } else {
+      const latest = await Card.find({ repertoire }).sort({ num: -1 }).limit(1).lean();
+      const baseNum = Number(latest?.[0]?.num);
+      nextNum = Number.isFinite(baseNum) ? Math.trunc(baseNum) + 1 : 1;
+    }
+
+    const existing = await Card.findOne({ repertoire, num: nextNum }).lean();
+    if (existing) {
+      return res.status(409).json({ error: "Une carte avec ce numero existe deja." });
+    }
+
+    const payload = {
+      num: nextNum,
+      repertoire,
+      cloud: false,
+      bg: "",
+      titre: "",
+      presentation: [],
+      plan: [],
+      fichiers: [],
+      quizz: [],
+      video: [],
+      evalQuizz: "non",
+      resultatQuizz: false,
+    };
+
+    const created = await Card.create(payload);
+    const result = created?.toObject ? created.toObject() : created;
+
+    res.status(201).json({ result });
+  } catch (err) {
+    console.error("POST /cards/admin", err);
+    res.status(500).json({ error: "Erreur lors de la creation de la carte." });
+  }
+});
+
 
 router.patch("/:id/title", requireAdmin, async (req, res) => {
   const { id } = req.params;
