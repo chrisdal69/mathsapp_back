@@ -55,7 +55,7 @@ const toBlurFileName = (filename) => {
 
 router.get("/", async (req, res) => {
   try {
-    const result = await Card.find().sort({ num: -1 }).lean().exec();
+    const result = await Card.find({ visible: true }).sort({ num: -1 }).lean().exec();
 
     if (!result.length) {
       return res.status(404).json({ error: "Aucune carte trouvée." });
