@@ -256,6 +256,52 @@ router.patch("/:id/visible", requireAdmin, async (req, res) => {
   }
 });
 
+router.patch("/:id/move", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const direction = (req.body?.direction || "").toLowerCase();
+
+  if (direction !== "up" && direction !== "down") {
+    return res.status(400).json({ error: "Direction invalide (attendue: up ou down)." });
+  }
+
+  try {
+    const current = await Card.findById(id).lean();
+    if (!current) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const filter = { repertoire: current.repertoire };
+    const sorted = await Card.find(filter).sort({ order: -1, num: -1 }).lean();
+
+    const index = sorted.findIndex((c) => String(c._id) === String(id));
+    if (index === -1) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const neighborIndex = direction === "up" ? index - 1 : index + 1;
+    if (neighborIndex < 0 || neighborIndex >= sorted.length) {
+      return res
+        .status(400)
+        .json({ error: direction === "up" ? "Carte déjà en tête." : "Carte déjà en queue." });
+    }
+
+    const neighbor = sorted[neighborIndex];
+    const currentOrder = Number.isFinite(current.order) ? current.order : 0;
+    const neighborOrder = Number.isFinite(neighbor.order) ? neighbor.order : 0;
+
+    await Promise.all([
+      Card.updateOne({ _id: current._id }, { $set: { order: neighborOrder } }),
+      Card.updateOne({ _id: neighbor._id }, { $set: { order: currentOrder } }),
+    ]);
+
+    const updatedList = await Card.find(filter).sort({ order: -1, num: -1 }).lean();
+    return res.json({ result: updatedList });
+  } catch (err) {
+    console.error("PATCH /cards/:id/move", err);
+    res.status(500).json({ error: "Erreur lors du déplacement de la carte." });
+  }
+});
+
 const sanitizeStringArray = (value) => {
   if (!Array.isArray(value)) return null;
   const next = value
