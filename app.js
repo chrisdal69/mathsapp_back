@@ -21,6 +21,7 @@ const cors = require("cors");
 const allowedOrigins = [
   "http://localhost:3001", // front en local
   "https://mathsapp-front.vercel.app", // front en production
+  "https://mathsapp-testfront.vercel.app", // front en test
 ];
 app.use(
   cors({
