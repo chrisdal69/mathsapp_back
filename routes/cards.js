@@ -3,7 +3,12 @@ var router = express.Router();
 const path = require("path");
 const sharp = require("sharp");
 const { Storage } = require("@google-cloud/storage");
-const { authenticate, authorize, verifyToken, requireAdmin } = require("../middlewares/auth");
+const {
+  authenticate,
+  authorize,
+  verifyToken,
+  requireAdmin,
+} = require("../middlewares/auth");
 const Card = require("../models/cards");
 
 const NODE_ENV = process.env.NODE_ENV;
@@ -19,7 +24,14 @@ if (NODE_ENV === "production") {
 }
 const bucketName = "mathsapp";
 const bucket = storage.bucket(bucketName);
-const allowedBgExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"]);
+const allowedBgExtensions = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+  ".bmp",
+]);
 const allowedFileExtensions = new Set([
   ".pdf",
   ".doc",
@@ -55,12 +67,15 @@ const toBlurFileName = (filename) => {
 
 router.get("/", async (req, res) => {
   try {
-    const result = await Card.find({ visible: true }).sort({ num: -1 }).lean().exec();
+    const result = await Card.find({ visible: true })
+      .sort({ order: -1 })
+      .lean()
+      .exec();
 
     if (!result.length) {
       return res.status(404).json({ error: "Aucune carte trouvée." });
     }
-    
+
     const sanitized = result.map((card) => {
       if (!Array.isArray(card.quizz)) return card;
       return {
@@ -87,13 +102,13 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.get("/admin",requireAdmin, async (req, res) => {
+router.get("/admin", requireAdmin, async (req, res) => {
   try {
-    const result = await Card.find().sort({ num: -1 }).lean().exec();
+    const result = await Card.find().sort({ order: -1 }).lean().exec();
 
     if (!result.length) {
       return res.status(404).json({ error: "Aucune carte trouvée." });
-    }  
+    }
 
     res.json({ result });
   } catch (err) {
@@ -104,43 +119,71 @@ router.get("/admin",requireAdmin, async (req, res) => {
 
 router.post("/admin", requireAdmin, async (req, res) => {
   const repertoire = (req.body?.repertoire || "").trim();
-  const parsedNum = Number(req.body?.num);
 
   if (!repertoire) {
     return res.status(400).json({ error: "Repertoire manquant." });
   }
 
   try {
-    let nextNum;
-    if (Number.isFinite(parsedNum)) {
-      nextNum = Math.trunc(parsedNum);
-    } else {
-      const latest = await Card.find({ repertoire }).sort({ num: -1 }).limit(1).lean();
-      const baseNum = Number(latest?.[0]?.num);
-      nextNum = Number.isFinite(baseNum) ? Math.trunc(baseNum) + 1 : 1;
-    }
+    const computeNextValues = async () => {
+      const [agg] = await Card.aggregate([
+        { $match: { repertoire } },
+        {
+          $group: {
+            _id: null,
+            maxNum: { $max: "$num" },
+            maxOrder: { $max: "$order" },
+          },
+        },
+      ]);
 
-    const existing = await Card.findOne({ repertoire, num: nextNum }).lean();
-    if (existing) {
-      return res.status(409).json({ error: "Une carte avec ce numero existe deja." });
-    }
-
-    const payload = {
-      num: nextNum,
-      repertoire,
-      cloud: false,
-      bg: "",
-      titre: "",
-      presentation: [],
-      plan: [],
-      fichiers: [],
-      quizz: [],
-      video: [],
-      evalQuizz: "non",
-      resultatQuizz: false,
+      const nextNum = Number.isFinite(agg?.maxNum)
+        ? Math.trunc(agg.maxNum) + 1
+        : 1;
+      const nextOrder = Number.isFinite(agg?.maxOrder)
+        ? Math.trunc(agg.maxOrder) + 1
+        : 1;
+      return { nextNum, nextOrder };
     };
 
-    const created = await Card.create(payload);
+    let values = await computeNextValues();
+    let created = null;
+
+    for (let attempt = 0; attempt < 2 && !created; attempt += 1) {
+      const payload = {
+        num: values.nextNum,
+        repertoire,
+        cloud: false,
+        bg: "",
+        titre: "",
+        presentation: [],
+        plan: [],
+        fichiers: [],
+        quizz: [],
+        video: [],
+        evalQuizz: "non",
+        resultatQuizz: false,
+        visible: false,
+        order: values.nextOrder,
+      };
+
+      try {
+        created = await Card.create(payload);
+      } catch (error) {
+        const isDupKey = error?.code === 11000;
+        if (isDupKey && attempt === 0) {
+          values = await computeNextValues();
+          continue;
+        }
+        if (isDupKey) {
+          return res
+            .status(409)
+            .json({ error: "Une carte avec ce num ou cet ordre existe deja." });
+        }
+        throw error;
+      }
+    }
+
     const result = created?.toObject ? created.toObject() : created;
 
     res.status(201).json({ result });
@@ -149,7 +192,6 @@ router.post("/admin", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "Erreur lors de la creation de la carte." });
   }
 });
-
 
 router.patch("/:id/title", requireAdmin, async (req, res) => {
   const { id } = req.params;
@@ -218,7 +260,11 @@ const sanitizeStringArray = (value) => {
   if (!Array.isArray(value)) return null;
   const next = value
     .map((item) =>
-      typeof item === "string" ? item.trim() : typeof item === "number" ? `${item}`.trim() : ""
+      typeof item === "string"
+        ? item.trim()
+        : typeof item === "number"
+        ? `${item}`.trim()
+        : ""
     )
     .map((item) => item || "")
     .filter((item) => item.length);
@@ -230,7 +276,9 @@ const patchListField = async (req, res, fieldName) => {
   const payload = sanitizeStringArray((req.body || {})[fieldName]);
 
   if (!payload) {
-    return res.status(400).json({ error: `Le champ ${fieldName} doit être un tableau de chaînes.` });
+    return res.status(400).json({
+      error: `Le champ ${fieldName} doit être un tableau de chaînes.`,
+    });
   }
 
   try {
@@ -265,7 +313,9 @@ const patchStringField = async (req, res, fieldName, label = fieldName) => {
   const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
 
   if (!trimmed) {
-    return res.status(400).json({ error: `Le champ ${label} est obligatoire.` });
+    return res
+      .status(400)
+      .json({ error: `Le champ ${label} est obligatoire.` });
   }
 
   try {
@@ -316,7 +366,10 @@ const normalizeTagNumber = (value) => {
 };
 
 const sanitizeFileBaseName = (rawName, extension) => {
-  const ext = typeof extension === "string" ? extension : path.extname(rawName || "").toLowerCase();
+  const ext =
+    typeof extension === "string"
+      ? extension
+      : path.extname(rawName || "").toLowerCase();
   const base = path
     .basename(rawName || "fichier", ext)
     .replace(/[^a-zA-Z0-9_-]/g, "_")
@@ -329,7 +382,11 @@ const sanitizeFileBaseName = (rawName, extension) => {
 const resolveArrayInsertIndex = (list, position) => {
   const length = Array.isArray(list) ? list.length : 0;
   if (position === "start") return 0;
-  if (position === "end" || typeof position === "undefined" || position === null) {
+  if (
+    position === "end" ||
+    typeof position === "undefined" ||
+    position === null
+  ) {
     return length;
   }
   const numeric = Number(position);
@@ -350,7 +407,8 @@ const sanitizeVideoArray = (list) =>
 const isSafeFileName = (value) => {
   if (!value || typeof value !== "string") return false;
   if (value.length > 200) return false;
-  if (value.includes("/") || value.includes("\\") || value.includes("..")) return false;
+  if (value.includes("/") || value.includes("\\") || value.includes(".."))
+    return false;
   return true;
 };
 
@@ -385,7 +443,9 @@ const uploadBufferToBucket = (fileRef, buffer, mimetype) =>
 
 const buildBlurBuffer = async (buffer, format) => {
   try {
-    let instance = sharp(buffer).resize({ width: 32, height: 32, fit: "inside" }).blur(8);
+    let instance = sharp(buffer)
+      .resize({ width: 32, height: 32, fit: "inside" })
+      .blur(8);
     if (format === ".jpg") {
       instance = instance.jpeg({ quality: 60 });
     } else if (format === ".jpeg") {
@@ -422,14 +482,19 @@ router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
 
     const extension = path.extname(uploadedFile.name || "").toLowerCase();
     if (!allowedBgExtensions.has(extension)) {
-      return res.status(400).json({ error: "Extension d'image non autorisée." });
+      return res
+        .status(400)
+        .json({ error: "Extension d'image non autorisée." });
     }
 
     const targetRepertoire =
       (req.body && req.body.repertoire) || card.repertoire;
     let sanitizedRepertoire;
     try {
-      sanitizedRepertoire = sanitizeStorageSegment(targetRepertoire, "Répertoire");
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "Répertoire"
+      );
     } catch (validationError) {
       return res.status(400).json({ error: validationError.message });
     }
@@ -467,7 +532,9 @@ router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
       );
       previousFile
         .delete({ ignoreNotFound: true })
-        .catch((err) => console.warn("Suppression de l'ancien background échouée", err));
+        .catch((err) =>
+          console.warn("Suppression de l'ancien background échouée", err)
+        );
 
       const prevBlurName = toBlurFileName(card.bg);
       if (prevBlurName) {
@@ -477,12 +544,19 @@ router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
         prevBlurFile
           .delete({ ignoreNotFound: true })
           .catch((err) =>
-            console.warn("Suppression de l'ancien background flouté échouée", err)
+            console.warn(
+              "Suppression de l'ancien background flouté échouée",
+              err
+            )
           );
       }
     }
 
-    await uploadBufferToBucket(fileRef, uploadedFile.data, uploadedFile.mimetype);
+    await uploadBufferToBucket(
+      fileRef,
+      uploadedFile.data,
+      uploadedFile.mimetype
+    );
     const blurBuffer = await buildBlurBuffer(uploadedFile.data, extension);
     if (blurBuffer) {
       await uploadBufferToBucket(blurRef, blurBuffer, uploadedFile.mimetype);
@@ -546,18 +620,25 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     const rawExtension = path.extname(uploadedFile.name || "").toLowerCase();
     const { ext, base } = sanitizeFileBaseName(uploadedFile.name, rawExtension);
     if (!ext || !allowedFileExtensions.has(ext)) {
-      return res.status(400).json({ error: "Extension de fichier non autoris\u00e9e." });
+      return res
+        .status(400)
+        .json({ error: "Extension de fichier non autoris\u00e9e." });
     }
 
     if (uploadedFile.size && uploadedFile.size > 10 * 1024 * 1024) {
-      return res.status(400).json({ error: "Fichier trop volumineux (10 Mo max)." });
+      return res
+        .status(400)
+        .json({ error: "Fichier trop volumineux (10 Mo max)." });
     }
 
     const targetRepertoire =
       (req.body && req.body.repertoire) || card.repertoire;
     let sanitizedRepertoire;
     try {
-      sanitizedRepertoire = sanitizeStorageSegment(targetRepertoire, "R\u00e9pertoire");
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "R\u00e9pertoire"
+      );
     } catch (validationError) {
       return res.status(400).json({ error: validationError.message });
     }
@@ -579,14 +660,24 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${uniqueName}`;
     const fileRef = bucket.file(objectPath);
 
-    await uploadBufferToBucket(fileRef, uploadedFile.data, uploadedFile.mimetype);
+    await uploadBufferToBucket(
+      fileRef,
+      uploadedFile.data,
+      uploadedFile.mimetype
+    );
     try {
       await fileRef.makePublic();
     } catch (err) {
-      console.warn("Impossible de rendre le fichier public imm\u00e9diatement", err);
+      console.warn(
+        "Impossible de rendre le fichier public imm\u00e9diatement",
+        err
+      );
     }
 
-    const listPosition = resolveArrayInsertIndex(card.fichiers, req.body?.position);
+    const listPosition = resolveArrayInsertIndex(
+      card.fichiers,
+      req.body?.position
+    );
     const normalizedPosition = Number.isFinite(listPosition)
       ? Math.trunc(listPosition)
       : null;
@@ -599,7 +690,9 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
       $push: {
         fichiers: {
           $each: [{ txt: description, href: uniqueName }],
-          ...(Number.isFinite(normalizedPosition) ? { $position: normalizedPosition } : {}),
+          ...(Number.isFinite(normalizedPosition)
+            ? { $position: normalizedPosition }
+            : {}),
         },
       },
     };
@@ -608,7 +701,9 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     }).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s upload." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s upload." });
     }
 
     res.json({
@@ -624,7 +719,9 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
 
 router.delete("/:id/files", requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const targetHref = (req.body && req.body.href ? `${req.body.href}` : "").trim();
+  const targetHref = (
+    req.body && req.body.href ? `${req.body.href}` : ""
+  ).trim();
 
   if (!targetHref) {
     return res.status(400).json({ error: "Nom de fichier manquant." });
@@ -639,7 +736,10 @@ router.delete("/:id/files", requireAdmin, async (req, res) => {
       return res.status(404).json({ error: "Carte introuvable." });
     }
 
-    const sanitizedRepertoire = sanitizeStorageSegment(card.repertoire, "R\u00e9pertoire");
+    const sanitizedRepertoire = sanitizeStorageSegment(
+      card.repertoire,
+      "R\u00e9pertoire"
+    );
     if (!sanitizedRepertoire) {
       return res.status(400).json({ error: "R\u00e9pertoire manquant." });
     }
@@ -653,7 +753,9 @@ router.delete("/:id/files", requireAdmin, async (req, res) => {
       ? card.fichiers.some((f) => f && f.href === targetHref)
       : false;
     if (!existsInCard) {
-      return res.status(404).json({ error: "Fichier non trouv\u00e9 dans la carte." });
+      return res
+        .status(404)
+        .json({ error: "Fichier non trouv\u00e9 dans la carte." });
     }
 
     const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${targetHref}`;
@@ -671,19 +773,25 @@ router.delete("/:id/files", requireAdmin, async (req, res) => {
     ).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s suppression." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s suppression." });
     }
 
     res.json({ result: updatedCard });
   } catch (err) {
     console.error("DELETE /cards/:id/files", err);
-    res.status(500).json({ error: "Erreur lors de la suppression du fichier." });
+    res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression du fichier." });
   }
 });
 
 router.patch("/:id/files", requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const targetHref = (req.body && req.body.href ? `${req.body.href}` : "").trim();
+  const targetHref = (
+    req.body && req.body.href ? `${req.body.href}` : ""
+  ).trim();
   const rawTxt = (req.body && req.body.txt ? `${req.body.txt}` : "").trim();
 
   if (!targetHref) {
@@ -706,23 +814,34 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
       ? card.fichiers.some((f) => f && f.href === targetHref)
       : false;
     if (!existsInCard) {
-      return res.status(404).json({ error: "Fichier non trouv\u00e9 dans la carte." });
+      return res
+        .status(404)
+        .json({ error: "Fichier non trouv\u00e9 dans la carte." });
     }
 
     const updatedCard = await Card.findOneAndUpdate(
-      { _id: card._id, repertoire: card.repertoire, num: card.num, "fichiers.href": targetHref },
+      {
+        _id: card._id,
+        repertoire: card.repertoire,
+        num: card.num,
+        "fichiers.href": targetHref,
+      },
       { $set: { "fichiers.$.txt": rawTxt } },
       { new: true }
     ).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
     }
 
     res.json({ result: updatedCard });
   } catch (err) {
     console.error("PATCH /cards/:id/files", err);
-    res.status(500).json({ error: "Erreur lors de la mise \u00e0 jour du fichier." });
+    res
+      .status(500)
+      .json({ error: "Erreur lors de la mise \u00e0 jour du fichier." });
   }
 });
 
@@ -738,7 +857,10 @@ router.post("/:id/video", requireAdmin, async (req, res) => {
 
     const currentList = sanitizeVideoArray(card.video);
     const insertIndex = resolveArrayInsertIndex(currentList, position);
-    const normalizedIndex = Math.max(0, Math.min(currentList.length, insertIndex));
+    const normalizedIndex = Math.max(
+      0,
+      Math.min(currentList.length, insertIndex)
+    );
     const next = [...currentList];
     next.splice(normalizedIndex, 0, { txt: "", href: "" });
 
@@ -749,7 +871,9 @@ router.post("/:id/video", requireAdmin, async (req, res) => {
     ).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s ajout." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s ajout." });
     }
 
     res.json({ result: updatedCard });
@@ -787,13 +911,17 @@ router.delete("/:id/video", requireAdmin, async (req, res) => {
     ).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s suppression." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s suppression." });
     }
 
     res.json({ result: updatedCard });
   } catch (err) {
     console.error("DELETE /cards/:id/video", err);
-    res.status(500).json({ error: "Erreur lors de la suppression de la video." });
+    res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression de la video." });
   }
 });
 
@@ -836,13 +964,17 @@ router.patch("/:id/video", requireAdmin, async (req, res) => {
     ).lean();
 
     if (!updatedCard) {
-      return res.status(404).json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apr\u00e8s mise \u00e0 jour." });
     }
 
     res.json({ result: updatedCard });
   } catch (err) {
     console.error("PATCH /cards/:id/video", err);
-    res.status(500).json({ error: "Erreur lors de la mise \u00e0 jour de la video." });
+    res
+      .status(500)
+      .json({ error: "Erreur lors de la mise \u00e0 jour de la video." });
   }
 });
 

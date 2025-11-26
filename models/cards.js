@@ -28,6 +28,7 @@ const cardSchema = new mongoose.Schema({
   evalQuizz:String,
   resultatQuizz:Boolean,
   visible:Boolean,
+  order:Number,
 });
 
 module.exports = mongoose.model("Card", cardSchema);
