@@ -10,6 +10,7 @@ const {
   requireAdmin,
 } = require("../middlewares/auth");
 const Card = require("../models/cards");
+const Quizz = require("../models/quizzs");
 
 const NODE_ENV = process.env.NODE_ENV;
 let storage;
@@ -253,6 +254,46 @@ router.patch("/:id/visible", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("PATCH /cards/:id/visible", err);
     res.status(500).json({ error: "Erreur serveur." });
+  }
+});
+
+router.delete("/:id", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const sanitizedRepertoire = sanitizeStorageSegment(card.repertoire, "Repertoire");
+    const tagNumber = normalizeTagNumber(card.num);
+
+    await Promise.all([
+      Card.deleteOne({ _id: card._id }),
+      Quizz.deleteMany({ id_card: card._id }),
+      (async () => {
+        if (sanitizedRepertoire && tagNumber !== null) {
+          const prefix = `${sanitizedRepertoire}/tag${Math.trunc(tagNumber)}/`;
+          try {
+            await bucket.deleteFiles({ prefix });
+          } catch (err) {
+            console.warn("Suppression des fichiers du bucket échouée", err);
+          }
+        }
+      })(),
+    ]);
+
+    return res.json({
+      result: {
+        id: card._id,
+        num: card.num,
+        repertoire: card.repertoire,
+      },
+    });
+  } catch (err) {
+    console.error("DELETE /cards/:id", err);
+    res.status(500).json({ error: "Erreur lors de la suppression de la carte." });
   }
 });
 
