@@ -177,6 +177,43 @@ router.patch("/:id/title", requireAdmin, async (req, res) => {
   }
 });
 
+router.patch("/:id/visible", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rawValue = (req.body || {}).visible;
+  let normalizedVisible = null;
+
+  if (typeof rawValue === "boolean") {
+    normalizedVisible = rawValue;
+  } else if (typeof rawValue === "string") {
+    if (rawValue.toLowerCase() === "true") {
+      normalizedVisible = true;
+    } else if (rawValue.toLowerCase() === "false") {
+      normalizedVisible = false;
+    }
+  }
+
+  if (normalizedVisible === null) {
+    return res.status(400).json({ error: "Valeur de visibilitǸ invalide." });
+  }
+
+  try {
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { visible: normalizedVisible },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/visible", err);
+    res.status(500).json({ error: "Erreur serveur." });
+  }
+});
+
 const sanitizeStringArray = (value) => {
   if (!Array.isArray(value)) return null;
   const next = value
