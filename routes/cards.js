@@ -54,6 +54,7 @@ const allowedFileExtensions = new Set([
   ".gif",
   ".svg",
   ".webp",
+  ".mp4",
 ]);
 const toBlurFileName = (filename) => {
   if (!filename || typeof filename !== "string") {
@@ -709,7 +710,7 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     if (!ext || !allowedFileExtensions.has(ext)) {
       return res
         .status(400)
-        .json({ error: "Extension de fichier non autoris\u00e9e." });
+        .json({ error: "Extension de fichier non autorisée." });
     }
 
     if (uploadedFile.size && uploadedFile.size > 100 * 1024 * 1024) {
