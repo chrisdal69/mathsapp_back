@@ -12,14 +12,13 @@ var uploadRouter = require("./routes/upload");
 var cardsRouter = require("./routes/cards");
 var quizzsRouter = require("./routes/quizzs");
 
-
-
 var app = express();
 const fileUpload = require("express-fileupload");
 app.use(fileUpload());
 const cors = require("cors");
 const allowedOrigins = [
   "http://localhost:3001", // front en local
+  "http://localhost:3000", // front en local
   "https://mathsapp-front.vercel.app", // front en production
   "https://mathsapp-testfront.vercel.app", // front en test
 ];
@@ -50,6 +49,5 @@ app.use("/auth", authRoutes); // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
 app.use("/cards", cardsRouter); // pour profile, admin actions...
 app.use("/quizzs", quizzsRouter); // pour enregistrements des résultats de quizz...
-
 
 module.exports = app;
