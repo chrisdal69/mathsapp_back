@@ -712,10 +712,10 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
         .json({ error: "Extension de fichier non autoris\u00e9e." });
     }
 
-    if (uploadedFile.size && uploadedFile.size > 10 * 1024 * 1024) {
+    if (uploadedFile.size && uploadedFile.size > 100 * 1024 * 1024) {
       return res
         .status(400)
-        .json({ error: "Fichier trop volumineux (10 Mo max)." });
+        .json({ error: "Fichier trop volumineux (100 Mo max)." });
     }
 
     const targetRepertoire =
