@@ -14,7 +14,13 @@ var quizzsRouter = require("./routes/quizzs");
 
 var app = express();
 const fileUpload = require("express-fileupload");
-app.use(fileUpload());
+app.use(
+  fileUpload({
+    limits: { fileSize: 100 * 1024 * 1024 },
+    abortOnLimit: true, // optionnel : stoppe proprement si dépassement
+    // responseOnLimit: "Fichier trop volumineux (100 Mo max)." // optionnel
+  })
+);
 const cors = require("cors");
 const allowedOrigins = [
   "http://localhost:3001", // front en local
