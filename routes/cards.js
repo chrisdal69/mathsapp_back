@@ -933,6 +933,103 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
   }
 });
 
+router.patch("/:id/files/reorder", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rawOrder = Array.isArray(req.body?.hrefs)
+    ? req.body.hrefs
+    : Array.isArray(req.body?.order)
+    ? req.body.order
+    : null;
+
+  if (!rawOrder) {
+    return res
+      .status(400)
+      .json({ error: "Liste d'ordre manquante (hrefs ou order)." });
+  }
+
+  const cleanedOrder = [];
+  for (const item of rawOrder) {
+    const href = typeof item === "string" ? item.trim() : "";
+    if (!href) {
+      return res
+        .status(400)
+        .json({ error: "Nom de fichier invalide dans l'ordre fourni." });
+    }
+    if (!isSafeFileName(href)) {
+      return res.status(400).json({ error: `Nom de fichier invalide: ${href}.` });
+    }
+    cleanedOrder.push(href);
+  }
+
+  const unique = new Set(cleanedOrder);
+  if (unique.size !== cleanedOrder.length) {
+    return res.status(400).json({ error: "Duplicata dans l'ordre fourni." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const currentList = Array.isArray(card.fichiers)
+      ? card.fichiers.filter((f) => f && typeof f.href === "string")
+      : [];
+
+    if (!currentList.length) {
+      return res.status(400).json({ error: "Aucun fichier a reordonner." });
+    }
+
+    if (cleanedOrder.length !== currentList.length) {
+      return res.status(400).json({ error: "Ordre incomplet ou invalide." });
+    }
+
+    const fileMap = new Map();
+    for (const file of currentList) {
+      fileMap.set(file.href, file);
+    }
+
+    const missing = currentList
+      .map((f) => f.href)
+      .filter((href) => !unique.has(href));
+    if (missing.length) {
+      return res.status(400).json({
+        error: "Tous les fichiers doivent etre inclus dans l'ordre fourni.",
+      });
+    }
+
+    const unknown = cleanedOrder.filter((href) => !fileMap.has(href));
+    if (unknown.length) {
+      return res
+        .status(400)
+        .json({ error: "Fichier inconnu dans l'ordre fourni." });
+    }
+
+    const reordered = cleanedOrder
+      .map((href) => fileMap.get(href))
+      .filter(Boolean);
+
+    const updatedCard = await Card.findOneAndUpdate(
+      { _id: card._id, repertoire: card.repertoire, num: card.num },
+      { fichiers: reordered },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({
+        error: "Carte introuvable apres reordonnancement.",
+      });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/files/reorder", err);
+    res.status(500).json({
+      error: "Erreur lors du reordonnancement des fichiers.",
+    });
+  }
+});
+
 router.post("/:id/video", requireAdmin, async (req, res) => {
   const { id } = req.params;
   const position = req.body?.position;
