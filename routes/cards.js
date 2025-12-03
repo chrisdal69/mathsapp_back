@@ -258,6 +258,43 @@ router.patch("/:id/visible", requireAdmin, async (req, res) => {
   }
 });
 
+router.patch("/:id/cloud", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rawValue = (req.body || {}).cloud;
+  let normalizedCloud = null;
+
+  if (typeof rawValue === "boolean") {
+    normalizedCloud = rawValue;
+  } else if (typeof rawValue === "string") {
+    if (rawValue.toLowerCase() === "true") {
+      normalizedCloud = true;
+    } else if (rawValue.toLowerCase() === "false") {
+      normalizedCloud = false;
+    }
+  }
+
+  if (normalizedCloud === null) {
+    return res.status(400).json({ error: "Valeur cloud invalide." });
+  }
+
+  try {
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { cloud: normalizedCloud },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/cloud", err);
+    res.status(500).json({ error: "Erreur serveur." });
+  }
+});
+
 router.delete("/:id", requireAdmin, async (req, res) => {
   const { id } = req.params;
 
