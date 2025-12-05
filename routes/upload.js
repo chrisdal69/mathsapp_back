@@ -337,9 +337,25 @@ function validatePathComponent(value, label) {
 }
 
 function removeSpaces(str) {
-  //enlÃ¨ve les espaces
-  return str.replace(/\s+/g, "");
+  if (typeof str !== "string") return "";
+
+  // remplace accents ciblés puis enlève les espaces
+  const accentMap = {
+    é: "e", ë: "e", è: "e", ê: "e", É: "E", Ë: "E", È: "E", Ê: "E",
+    ô: "o", ö: "o", Ô: "O", Ö: "O",
+    ü: "u", ù: "u", û: "u", Ü: "U", Ù: "U", Û: "U",
+    ï: "i", î: "i", Ï: "I", Î: "I",
+    â: "a", à: "a", ä: "a", Â: "A", À: "A", Ä: "A",
+    ç: "c", Ç: "C",
+  };
+
+  const withoutSpaces = str.replace(/\s+/g, "");
+  return withoutSpaces.replace(
+    /[éëèêÉËÈÊôöÔÖüùûÜÙÛïîÏÎâàäÂÀÄçÇ]/g,
+    (c) => accentMap[c] || ""
+  );
 }
+
 
 // Valide un nom de fichier (pas de séparateurs/chemins, longueur et charset raisonnables)
 function validateFileName(name, label = "Nom de fichier") {
@@ -585,6 +601,7 @@ router.post("/rename", authenticate, async (req, res) => {
         .status(404)
         .json({ success: false, message: "Fichier introuvable" });
     }
+    
 
     // Copie vers le nouveau nom
     await oldFile.copy(newFile);
@@ -629,14 +646,14 @@ router.post("/renameA", requireAdmin, async (req, res) => {
     if (!allowedExtensions.includes(ext)) {
       return res.status(400).json({ success: false, message: "Extension non autorisée" });
     }
-
+   
     const oldPath = `${parent}/${repertoire}/${oldName}`;
     const racine = oldName.split('___')[0];
     const newPath = `${parent}/${repertoire}/${racine}___${newName}`;
     
     const oldFile = bucket.file(oldPath);
     const newFile = bucket.file(newPath);
-
+ 
     // Vérifie si lâ€™ancien fichier existe
     const [exists] = await oldFile.exists();
     if (!exists) {

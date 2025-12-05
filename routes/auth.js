@@ -8,16 +8,21 @@ const nodemailer = require("nodemailer");
 
 /* DEBUT SIGNUP */
 // VERIFICATION DONNEE RECUES
+
+const nameRegex = /^[\p{L}\s_-]+$/u;
+
 const signupSchema = yup.object().shape({
   nom: yup
     .string()
     .trim()
     .min(2, "Le nom doit contenir au moins 2 caractères")
+    .matches(nameRegex, "Lettres, espaces, - ou _ uniquement")
     .required("Le nom est obligatoire"),
   prenom: yup
     .string()
     .trim()
     .min(2, "Le prénom doit contenir au moins 2 caractères")
+    .matches(nameRegex, "Lettres, espaces, - ou _ uniquement")
     .required("Le prénom est obligatoire"),
   email: yup
     .string()
@@ -34,12 +39,12 @@ const signupSchema = yup.object().shape({
     .required("Mot de passe obligatoire"),
   confirmPassword: yup
     .string()
-    .oneOf(
-      [yup.ref("password"), null],
-      "Les mots de passe ne correspondent pas"
-    )
+    .oneOf([yup.ref("password"), null], "Les mots de passe ne correspondent pas")
     .required("Confirmez votre mot de passe"),
 });
+
+
+
 const verifmailcodeSchema = yup.object().shape({
   email: yup
     .string()
@@ -70,6 +75,7 @@ router.post("/signup", async (req, res) => {
   let { nom, prenom, email, password, confirmPassword } = req.body;
   nom = nom.toUpperCase().trim();
   prenom = prenom.toLowerCase().trim();
+  email = email.toLowerCase().trim();
   try {
     // 1️⃣ Validation des données avec Yup
     await signupSchema.validate(
@@ -142,7 +148,9 @@ router.post("/signup", async (req, res) => {
 });
 
 router.post("/verifmail", async (req, res) => {
-  const { email, code } = req.body;
+  let { email, code } = req.body;
+  email = email.toLowerCase().trim();
+
   try {
     // 1️⃣ Validation des données avec Yup
     await verifmailcodeSchema.validate(
@@ -203,7 +211,8 @@ router.post("/verifmail", async (req, res) => {
 });
 
 router.post("/resend-code", async (req, res) => {
-  const { email } = req.body;
+  let { email } = req.body;
+  email = email.toLowerCase().trim();
 
   try {
     // 1️⃣ Vérifie que l’email est fourni
@@ -284,6 +293,8 @@ const loginSchema = yup.object().shape({
 });
 router.post("/login", async (req, res) => {
   let { email, password } = req.body;
+  email = email.toLowerCase().trim();
+
   try {
     // 1- Validation des données avec Yup
     await loginSchema.validate(
