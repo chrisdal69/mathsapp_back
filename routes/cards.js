@@ -79,9 +79,17 @@ router.get("/", async (req, res) => {
     }
 
     const sanitized = result.map((card) => {
-      if (!Array.isArray(card.quizz)) return card;
+      const filteredFiles = Array.isArray(card.fichiers)
+        ? card.fichiers.filter((f) => f && f.visible === true)
+        : card.fichiers;
+
+      if (!Array.isArray(card.quizz)) {
+        return { ...card, fichiers: filteredFiles };
+      }
+
       return {
         ...card,
+        fichiers: filteredFiles,
         quizz: card.quizz.map((q) => {
           const base = {
             id: q.id,
@@ -814,7 +822,7 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     const update = {
       $push: {
         fichiers: {
-          $each: [{ txt: description, href: uniqueName }],
+          $each: [{ txt: description, href: uniqueName, visible: true }],
           ...(Number.isFinite(normalizedPosition)
             ? { $position: normalizedPosition }
             : {}),
@@ -917,7 +925,13 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
   const targetHref = (
     req.body && req.body.href ? `${req.body.href}` : ""
   ).trim();
-  const rawTxt = (req.body && req.body.txt ? `${req.body.txt}` : "").trim();
+  const hasTxt = Object.prototype.hasOwnProperty.call(req.body || {}, "txt");
+  const hasVisible = Object.prototype.hasOwnProperty.call(
+    req.body || {},
+    "visible"
+  );
+  const rawTxt = hasTxt ? (`${req.body?.txt || ""}`).trim() : "";
+  const rawVisible = hasVisible ? req.body?.visible : undefined;
 
   if (!targetHref) {
     return res.status(400).json({ error: "Nom de fichier manquant." });
@@ -925,8 +939,25 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
   if (!isSafeFileName(targetHref)) {
     return res.status(400).json({ error: "Nom de fichier invalide." });
   }
-  if (!rawTxt) {
+  if (!hasTxt && !hasVisible) {
+    return res.status(400).json({ error: "Aucune modification fournie." });
+  }
+  if (hasTxt && !rawTxt) {
     return res.status(400).json({ error: "Le descriptif est obligatoire." });
+  }
+
+  let normalizedVisible = null;
+  if (hasVisible) {
+    if (typeof rawVisible === "boolean") {
+      normalizedVisible = rawVisible;
+    } else if (typeof rawVisible === "string") {
+      const lowered = rawVisible.toLowerCase();
+      if (lowered === "true") normalizedVisible = true;
+      else if (lowered === "false") normalizedVisible = false;
+    }
+    if (normalizedVisible === null) {
+      return res.status(400).json({ error: "Valeur visible invalide." });
+    }
   }
 
   try {
@@ -944,6 +975,14 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
         .json({ error: "Fichier non trouv\u00e9 dans la carte." });
     }
 
+    const updateFields = {};
+    if (hasTxt) {
+      updateFields["fichiers.$.txt"] = rawTxt;
+    }
+    if (hasVisible) {
+      updateFields["fichiers.$.visible"] = normalizedVisible;
+    }
+
     const updatedCard = await Card.findOneAndUpdate(
       {
         _id: card._id,
@@ -951,7 +990,7 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
         num: card.num,
         "fichiers.href": targetHref,
       },
-      { $set: { "fichiers.$.txt": rawTxt } },
+      { $set: updateFields },
       { new: true }
     ).lean();
 
