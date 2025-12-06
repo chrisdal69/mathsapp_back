@@ -41,6 +41,64 @@ const allowedExtensions = [
 
 // Liste blanche optionnelle des parents
 const allowedParents = ["ciel1","cloud","python"];
+const stripPrefix = (name = "") => {
+  const parts = `${name}`.split("___");
+  return parts.length > 1 ? parts.slice(1).join("___") : name;
+};
+
+// Téléchargement proxy (retire le préfixe nom+prenom+___ du nom proposé)
+router.get("/download", authenticate, async (req, res) => {
+  try {
+    const parent = validatePathComponent(req.query.parent, "Dossier parent");
+    const repertoire = validatePathComponent(
+      req.query.repertoire,
+      "Nom de répertoire"
+    );
+    const file = validateFileName(req.query.file, "Nom de fichier");
+
+    if (!allowedParents.includes(parent)) {
+      return res
+        .status(403)
+        .json({ error: "Dossier parent non autorisé." });
+    }
+
+    const objectPath = `${parent}/${repertoire}/${file}`;
+    const fileRef = bucket.file(objectPath);
+    const [exists] = await fileRef.exists();
+    if (!exists) {
+      return res.status(404).json({ error: "Fichier introuvable." });
+    }
+
+    const [metadata] = await fileRef.getMetadata();
+    const contentType = metadata?.contentType || "application/octet-stream";
+    const downloadName = stripPrefix(file) || file;
+    const safeName = downloadName.replace(/"/g, "");
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(
+        safeName
+      )}`
+    );
+
+    const stream = fileRef.createReadStream();
+    stream.on("error", (err) => {
+      console.error("Erreur lecture fichier cloud download", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Erreur lors du téléchargement." });
+      } else {
+        res.end();
+      }
+    });
+    stream.pipe(res);
+  } catch (err) {
+    console.error("GET /upload/download", err);
+    res
+      .status(400)
+      .json({ error: err.message || "Erreur lors du téléchargement." });
+  }
+});
 
 /************************************************************************* */
 
