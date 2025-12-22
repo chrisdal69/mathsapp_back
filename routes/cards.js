@@ -206,6 +206,38 @@ router.post("/admin", requireAdmin, async (req, res) => {
   }
 });
 
+router.get("/cloud", authenticate, async (req, res) => {
+  const trimmedCard =
+    typeof req.query.id_card === "string" ? req.query.id_card.trim() : "";
+  const userId = req.user?.userId;
+
+  if (!trimmedCard) {
+    return res.status(400).json({ error: "Id de carte manquant." });
+  }
+  if (!mongoose.Types.ObjectId.isValid(trimmedCard)) {
+    return res.status(400).json({ error: "Id de carte invalide." });
+  }
+  if (!userId) {
+    return res.status(401).json({ error: "Utilisateur non authentifie." });
+  }
+
+  try {
+    const result = await Cloud.find({
+      id_card: trimmedCard,
+      id_user: userId,
+    })
+      .sort({ date: -1 })
+      .lean();
+
+    return res.json({ result });
+  } catch (err) {
+    console.error("GET /cards/cloud", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la recuperation des messages cloud." });
+  }
+});
+
 router.post("/cloud", requireAdmin, async (req, res) => {
   const { id_card, nom, prenom, message, filename } = req.body || {};
   const trimmedCard = typeof id_card === "string" ? id_card.trim() : "";
