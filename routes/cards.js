@@ -2,6 +2,7 @@ var express = require("express");
 var router = express.Router();
 const path = require("path");
 const sharp = require("sharp");
+const mongoose = require("mongoose");
 const { Storage } = require("@google-cloud/storage");
 const {
   authenticate,
@@ -10,7 +11,9 @@ const {
   requireAdmin,
 } = require("../middlewares/auth");
 const Card = require("../models/cards");
+const Cloud = require("../models/cloud");
 const Quizz = require("../models/quizzs");
+const User = require("../models/users");
 
 const NODE_ENV = process.env.NODE_ENV;
 let storage;
@@ -200,6 +203,62 @@ router.post("/admin", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("POST /cards/admin", err);
     res.status(500).json({ error: "Erreur lors de la creation de la carte." });
+  }
+});
+
+router.post("/cloud", requireAdmin, async (req, res) => {
+  const { id_card, nom, prenom, message, filename } = req.body || {};
+  const trimmedCard = typeof id_card === "string" ? id_card.trim() : "";
+  const trimmedNom = typeof nom === "string" ? nom.trim().toUpperCase() : "";
+  const trimmedPrenom =
+    typeof prenom === "string" ? prenom.trim().toLowerCase() : "";
+  const trimmedMessage = typeof message === "string" ? message.trim() : "";
+  const trimmedFilename =
+    typeof filename === "string" ? filename.trim() : "";
+
+  if (!trimmedCard) {
+    return res.status(400).json({ error: "Id de carte manquant." });
+  }
+  if (!mongoose.Types.ObjectId.isValid(trimmedCard)) {
+    return res.status(400).json({ error: "Id de carte invalide." });
+  }
+  if (!trimmedNom || !trimmedPrenom) {
+    return res.status(400).json({ error: "Nom ou prenom manquant." });
+  }
+  if (!trimmedMessage) {
+    return res.status(400).json({ error: "Message manquant." });
+  }
+  if (!trimmedFilename) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+
+  try {
+    const user = await User.findOne({
+      nom: trimmedNom,
+      prenom: trimmedPrenom,
+    }).lean();
+    if (!user) {
+      return res.status(404).json({ error: "Utilisateur introuvable." });
+    }
+
+    const card = await Card.findById(trimmedCard).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const created = await Cloud.create({
+      id_user: user._id,
+      id_card: card._id,
+      filename: trimmedFilename,
+      message: trimmedMessage,
+    });
+
+    return res.status(201).json({ result: created });
+  } catch (err) {
+    console.error("POST /cards/cloud", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la creation du message cloud." });
   }
 });
 
