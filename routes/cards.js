@@ -238,6 +238,39 @@ router.get("/cloud", authenticate, async (req, res) => {
   }
 });
 
+router.delete("/cloud/:id", authenticate, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user?.userId;
+
+  if (!id) {
+    return res.status(400).json({ error: "Id de message manquant." });
+  }
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: "Id de message invalide." });
+  }
+  if (!userId) {
+    return res.status(401).json({ error: "Utilisateur non authentifie." });
+  }
+
+  try {
+    const deleted = await Cloud.findOneAndDelete({
+      _id: id,
+      id_user: userId,
+    }).lean();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Message introuvable." });
+    }
+
+    return res.json({ result: { id: deleted._id } });
+  } catch (err) {
+    console.error("DELETE /cards/cloud/:id", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression du message cloud." });
+  }
+});
+
 router.post("/cloud", requireAdmin, async (req, res) => {
   const { id_card, nom, prenom, message, filename } = req.body || {};
   const trimmedCard = typeof id_card === "string" ? id_card.trim() : "";
