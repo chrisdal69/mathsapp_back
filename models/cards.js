@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const hrefSchema = new mongoose.Schema({
     txt: String,
     href: String,
+    hover: { type: String, default: "" },
     visible:Boolean,
 });
 

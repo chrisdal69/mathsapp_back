@@ -864,6 +864,8 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     if (!description) {
       return res.status(400).json({ error: "Le descriptif est obligatoire." });
     }
+    const hoverRaw = (req.body && req.body.hover) || "";
+    const hover = typeof hoverRaw === "string" ? hoverRaw.trim() : "";
 
     if (!req.files || Object.keys(req.files).length === 0) {
       return res.status(400).json({ error: "Aucun fichier fourni." });
@@ -946,7 +948,7 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
     const update = {
       $push: {
         fichiers: {
-          $each: [{ txt: description, href: uniqueName, visible: true }],
+          $each: [{ txt: description, href: uniqueName, visible: true, hover }],
           ...(Number.isFinite(normalizedPosition)
             ? { $position: normalizedPosition }
             : {}),
@@ -1054,7 +1056,9 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
     req.body || {},
     "visible"
   );
+  const hasHover = Object.prototype.hasOwnProperty.call(req.body || {}, "hover");
   const rawTxt = hasTxt ? (`${req.body?.txt || ""}`).trim() : "";
+  const rawHover = hasHover ? (`${req.body?.hover || ""}`).trim() : "";
   const rawVisible = hasVisible ? req.body?.visible : undefined;
 
   if (!targetHref) {
@@ -1063,7 +1067,7 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
   if (!isSafeFileName(targetHref)) {
     return res.status(400).json({ error: "Nom de fichier invalide." });
   }
-  if (!hasTxt && !hasVisible) {
+  if (!hasTxt && !hasVisible && !hasHover) {
     return res.status(400).json({ error: "Aucune modification fournie." });
   }
   if (hasTxt && !rawTxt) {
@@ -1105,6 +1109,9 @@ router.patch("/:id/files", requireAdmin, async (req, res) => {
     }
     if (hasVisible) {
       updateFields["fichiers.$.visible"] = normalizedVisible;
+    }
+    if (hasHover) {
+      updateFields["fichiers.$.hover"] = rawHover;
     }
 
     const updatedCard = await Card.findOneAndUpdate(
