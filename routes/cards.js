@@ -698,6 +698,50 @@ const uploadBufferToBucket = (fileRef, buffer, mimetype) =>
     stream.end(buffer);
   });
 
+let uniformBucketLevelAccessEnabled = null;
+
+const isUniformBucketLevelAccessEnabled = async () => {
+  if (uniformBucketLevelAccessEnabled !== null) {
+    return uniformBucketLevelAccessEnabled;
+  }
+  try {
+    const [metadata] = await bucket.getMetadata();
+    uniformBucketLevelAccessEnabled = Boolean(
+      metadata?.iamConfiguration?.uniformBucketLevelAccess?.enabled
+    );
+  } catch (err) {
+    console.warn(
+      "Impossible de lire la config du bucket; tentative ACL directe.",
+      err
+    );
+    uniformBucketLevelAccessEnabled = false;
+  }
+  return uniformBucketLevelAccessEnabled;
+};
+
+const isUniformAccessError = (err) => {
+  const message = typeof err?.message === "string" ? err.message : "";
+  return err?.code === 400 && message.includes("uniform bucket-level access");
+};
+
+const makePublicIfAllowed = async (fileRef, label) => {
+  const uniformEnabled = await isUniformBucketLevelAccessEnabled();
+  if (uniformEnabled) {
+    return false;
+  }
+  try {
+    await fileRef.makePublic();
+    return true;
+  } catch (err) {
+    if (isUniformAccessError(err)) {
+      uniformBucketLevelAccessEnabled = true;
+      return false;
+    }
+    console.warn(`Impossible de rendre ${label} public immediatement`, err);
+    return false;
+  }
+};
+
 const buildBlurBuffer = async (buffer, format) => {
   try {
     let instance = sharp(buffer)
@@ -818,13 +862,9 @@ router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
     if (blurBuffer) {
       await uploadBufferToBucket(blurRef, blurBuffer, uploadedFile.mimetype);
     }
-    try {
-      await fileRef.makePublic();
-      if (blurBuffer) {
-        await blurRef.makePublic();
-      }
-    } catch (err) {
-      console.warn("Impossible de rendre le fichier public immédiatement", err);
+    await makePublicIfAllowed(fileRef, "le fichier");
+    if (blurBuffer) {
+      await makePublicIfAllowed(blurRef, "le fichier floute");
     }
 
     const updatedCard = await Card.findByIdAndUpdate(
@@ -924,14 +964,7 @@ router.post("/:id/files", requireAdmin, async (req, res) => {
       uploadedFile.data,
       uploadedFile.mimetype
     );
-    try {
-      await fileRef.makePublic();
-    } catch (err) {
-      console.warn(
-        "Impossible de rendre le fichier public imm\u00e9diatement",
-        err
-      );
-    }
+    await makePublicIfAllowed(fileRef, "le fichier");
 
     const listPosition = resolveArrayInsertIndex(
       card.fichiers,

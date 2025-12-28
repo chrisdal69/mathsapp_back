@@ -82,6 +82,50 @@ const uploadBufferToBucket = (fileRef, buffer, mimetype) =>
     stream.end(buffer);
   });
 
+let uniformBucketLevelAccessEnabled = null;
+
+const isUniformBucketLevelAccessEnabled = async () => {
+  if (uniformBucketLevelAccessEnabled !== null) {
+    return uniformBucketLevelAccessEnabled;
+  }
+  try {
+    const [metadata] = await bucket.getMetadata();
+    uniformBucketLevelAccessEnabled = Boolean(
+      metadata?.iamConfiguration?.uniformBucketLevelAccess?.enabled
+    );
+  } catch (err) {
+    console.warn(
+      "Impossible de lire la config du bucket; tentative ACL directe.",
+      err
+    );
+    uniformBucketLevelAccessEnabled = false;
+  }
+  return uniformBucketLevelAccessEnabled;
+};
+
+const isUniformAccessError = (err) => {
+  const message = typeof err?.message === "string" ? err.message : "";
+  return err?.code === 400 && message.includes("uniform bucket-level access");
+};
+
+const makePublicIfAllowed = async (fileRef, label) => {
+  const uniformEnabled = await isUniformBucketLevelAccessEnabled();
+  if (uniformEnabled) {
+    return false;
+  }
+  try {
+    await fileRef.makePublic();
+    return true;
+  } catch (err) {
+    if (isUniformAccessError(err)) {
+      uniformBucketLevelAccessEnabled = true;
+      return false;
+    }
+    console.warn(`Impossible de rendre ${label} public immediatement`, err);
+    return false;
+  }
+};
+
 const sanitizeQuizzArray = (value) => {
   if (!Array.isArray(value)) {
     return null;
@@ -529,11 +573,7 @@ router.post("/:id/image", requireAdmin, async (req, res) => {
     }
 
     await uploadBufferToBucket(fileRef, file.data, file.mimetype);
-    try {
-      await fileRef.makePublic();
-    } catch (err) {
-      console.warn("Impossible de rendre l'image publique immediatement", err);
-    }
+    await makePublicIfAllowed(fileRef, "l'image");
 
     const nextQuizz = normalizedQuizz.map((q, idx) => ({
       ...q,
