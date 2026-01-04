@@ -1,0 +1,14 @@
+[
+  {
+    "origin": [
+      "https://mathsapp.fr",
+      "https://mathsapp-front.vercel.app",
+      "https://mathsapp-testfront.vercel.app",
+      "http://localhost:3000",
+      "http://localhost:3001"
+    ],
+    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]
