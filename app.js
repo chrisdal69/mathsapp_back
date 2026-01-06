@@ -3,7 +3,7 @@ var path = require("path");
 var cookieParser = require("cookie-parser");
 var logger = require("morgan");
 require("dotenv").config();
-require("./models/connection");
+const connectToDatabase = require("./models/connection");
 
 var indexRouter = require("./routes/index");
 var authRoutes = require("./routes/auth");
@@ -13,6 +13,14 @@ var cardsRouter = require("./routes/cards");
 var quizzsRouter = require("./routes/quizzs");
 
 var app = express();
+connectToDatabase().catch((err) => {
+  console.error("Database connection error:", err);
+});
+
+const dbGuard = (req, res, next) => {
+  connectToDatabase().then(() => next()).catch(next);
+};
+
 const fileUpload = require("express-fileupload");
 app.use(
   fileUpload({
@@ -51,10 +59,10 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/", indexRouter);
-app.use("/users", usersRouter); // pour profile, admin actions...
-app.use("/auth", authRoutes); // pour login/logout/signup/refresh
+app.use("/users", dbGuard, usersRouter); // pour profile, admin actions...
+app.use("/auth", dbGuard, authRoutes); // pour login/logout/signup/refresh
 app.use("/upload", uploadRouter);
-app.use("/cards", cardsRouter); // pour profile, admin actions...
-app.use("/quizzs", quizzsRouter); // pour enregistrements des résultats de quizz...
+app.use("/cards", dbGuard, cardsRouter); // pour profile, admin actions...
+app.use("/quizzs", dbGuard, quizzsRouter); // pour enregistrements des résultats de quizz...
 
 module.exports = app;
