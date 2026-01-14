@@ -15,6 +15,13 @@ const quizzSchema = new mongoose.Schema({
     correct: Number,
 });
 
+const flashSchema = new mongoose.Schema({
+    id: String,
+    question: String,
+    imquestion: String,
+    reponse: String,
+    imreponse: String,
+});
 
 const cardSchema = new mongoose.Schema({
   num: Number,
@@ -22,15 +29,19 @@ const cardSchema = new mongoose.Schema({
   cloud: Boolean,
   bg: String,
   titre: String,
-  presentation: [String],
-  plan:[String],
-  fichiers: [hrefSchema],
-  quizz:[quizzSchema],
-  video:[hrefSchema],
+  presentation: { type: [String], default: [] },
+  plan: { type: [String], default: [] },
+  fichiers: { type: [hrefSchema], default: [] },
+  quizz: { type: [quizzSchema], default: [] },
+  flash: { type: [flashSchema], default: [] },
+  video: { type: [hrefSchema], default: [] },
   evalQuizz:String,
   resultatQuizz:Boolean,
   visible:Boolean,
   order:Number,
 });
+
+cardSchema.index({ repertoire: 1, num: 1 }, { unique: true });
+cardSchema.index({ repertoire: 1, order: 1 }, { unique: true });
 
 module.exports = mongoose.model("Card", cardSchema);

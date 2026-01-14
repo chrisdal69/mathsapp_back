@@ -174,6 +174,7 @@ router.post("/admin", requireAdmin, async (req, res) => {
         plan: [],
         fichiers: [],
         quizz: [],
+        flash:[],
         video: [],
         evalQuizz: "non",
         resultatQuizz: false,
