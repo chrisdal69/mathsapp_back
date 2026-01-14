@@ -446,13 +446,21 @@ router.delete("/:id", requireAdmin, async (req, res) => {
     await Promise.all([
       Card.deleteOne({ _id: card._id }),
       Quizz.deleteMany({ id_card: card._id }),
+      Cloud.deleteMany({ id_card: card._id }),
       (async () => {
         if (sanitizedRepertoire && tagNumber !== null) {
-          const prefix = `${sanitizedRepertoire}/tag${Math.trunc(tagNumber)}/`;
+          const tagSuffix = `tag${Math.trunc(tagNumber)}`;
+          const prefix = `${sanitizedRepertoire}/${tagSuffix}/`;
+          const cloudPrefix = `cloud/${sanitizedRepertoire}${tagSuffix}/`;
           try {
             await bucket.deleteFiles({ prefix });
           } catch (err) {
             console.warn("Suppression des fichiers du bucket échouée", err);
+          }
+          try {
+            await bucket.deleteFiles({ prefix: cloudPrefix });
+          } catch (err) {
+            console.warn("Suppression des fichiers cloud du bucket echouee", err);
           }
         }
       })(),
@@ -2026,4 +2034,3 @@ router.patch("/:id/video", requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
-
