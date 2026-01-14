@@ -59,6 +59,8 @@ const allowedFileExtensions = new Set([
   ".webp",
   ".mp4",
 ]);
+const allowedFlashImageExtensions = new Set([".jpg", ".jpeg", ".png"]);
+const MAX_FLASH_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const toBlurFileName = (filename) => {
   if (!filename || typeof filename !== "string") {
@@ -663,6 +665,23 @@ const sanitizeVideoArray = (list) =>
       }))
     : [];
 
+const sanitizeFlashArray = (list) =>
+  Array.isArray(list)
+    ? list.map((item, idx) => {
+        const trimmedId =
+          typeof item?.id === "string" ? item.id.trim() : "";
+        return {
+          id: trimmedId || `f${idx + 1}`,
+          question: typeof item?.question === "string" ? item.question.trim() : "",
+          imquestion:
+            typeof item?.imquestion === "string" ? item.imquestion.trim() : "",
+          reponse: typeof item?.reponse === "string" ? item.reponse.trim() : "",
+          imreponse:
+            typeof item?.imreponse === "string" ? item.imreponse.trim() : "",
+        };
+      })
+    : [];
+
 const isSafeFileName = (value) => {
   if (!value || typeof value !== "string") return false;
   if (value.length > 200) return false;
@@ -764,6 +783,377 @@ const buildBlurBuffer = async (buffer, format) => {
     return null;
   }
 };
+
+router.patch("/:id/flash", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rawFlash = (req.body || {}).flash;
+
+  if (!Array.isArray(rawFlash)) {
+    return res.status(400).json({ error: "Le flash doit etre un tableau." });
+  }
+
+  try {
+    const sanitized = sanitizeFlashArray(rawFlash);
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { flash: sanitized },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("PATCH /cards/:id/flash", err);
+    return res.status(500).json({ error: "Erreur lors de la mise a jour du flash." });
+  }
+});
+
+router.post("/:id/flash", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const position = req.body?.position;
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const currentList = sanitizeFlashArray(card.flash);
+    const insertIndex = resolveArrayInsertIndex(currentList, position);
+    const normalizedIndex = Math.max(
+      0,
+      Math.min(currentList.length, insertIndex)
+    );
+    const next = [...currentList];
+    next.splice(normalizedIndex, 0, {
+      id: "",
+      question: "",
+      imquestion: "",
+      reponse: "",
+      imreponse: "",
+    });
+
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { flash: sanitizeFlashArray(next) },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres ajout." });
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("POST /cards/:id/flash", err);
+    return res.status(500).json({ error: "Erreur lors de l'ajout du flash." });
+  }
+});
+
+router.delete("/:id/flash", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const rawIndex = req.body?.index;
+  const flashId = typeof req.body?.flashId === "string" ? req.body.flashId.trim() : "";
+  const index = Number.isInteger(rawIndex) ? rawIndex : Number(rawIndex);
+
+  if (!flashId && (!Number.isInteger(index) || index < 0)) {
+    return res.status(400).json({ error: "Indice ou flashId manquant." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const currentList = sanitizeFlashArray(card.flash);
+    let targetIndex = -1;
+    if (Number.isInteger(index) && index >= 0 && index < currentList.length) {
+      targetIndex = index;
+    } else if (flashId) {
+      targetIndex = currentList.findIndex((item) => item.id === flashId);
+    }
+
+    if (targetIndex === -1) {
+      return res.status(404).json({ error: "Flash card introuvable." });
+    }
+
+    const targetFlash = currentList[targetIndex] || {};
+    const imagesToDelete = [
+      targetFlash.imquestion,
+      targetFlash.imreponse,
+    ].filter((value) => typeof value === "string" && value.trim());
+    const next = currentList.filter((_, idx) => idx !== targetIndex);
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { flash: sanitizeFlashArray(next) },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres suppression." });
+    }
+
+    if (imagesToDelete.length) {
+      let sanitizedRepertoire = null;
+      try {
+        sanitizedRepertoire = sanitizeStorageSegment(
+          card.repertoire,
+          "Repertoire"
+        );
+      } catch (validationError) {
+        console.warn(
+          "Repertoire invalide, tentative suppression avec valeur brute.",
+          validationError
+        );
+        sanitizedRepertoire = null;
+      }
+
+      const tagNumber = normalizeTagNumber(card.num);
+      const fallbackRepertoire =
+        typeof card.repertoire === "string" ? card.repertoire.trim() : "";
+      const repertoireSegment = sanitizedRepertoire || fallbackRepertoire;
+      if (repertoireSegment && tagNumber !== null) {
+        const normalizedTagNumber = Math.trunc(tagNumber);
+        const deletions = imagesToDelete
+          .filter((name) => isSafeFileName(name))
+          .map((name) =>
+            bucket
+              .file(
+                `${repertoireSegment}/tag${normalizedTagNumber}/imagesFlash/${name}`
+              )
+              .delete({ ignoreNotFound: true })
+          );
+        const results = await Promise.allSettled(deletions);
+        results.forEach((result) => {
+          if (result.status === "rejected") {
+            console.warn("Suppression image flash echouee", result.reason);
+          }
+        });
+      }
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (err) {
+    console.error("DELETE /cards/:id/flash", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression du flash." });
+  }
+});
+
+router.post("/:id/flash/image", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const flashId = typeof req.body?.flashId === "string" ? req.body.flashId.trim() : "";
+  const fieldRaw = typeof req.body?.field === "string" ? req.body.field.trim() : "";
+  const field =
+    fieldRaw === "imquestion" || fieldRaw === "imreponse" ? fieldRaw : null;
+
+  if (!flashId || !field) {
+    return res.status(400).json({ error: "flashId et field requis." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ error: "Aucun fichier fourni." });
+    }
+
+    const file = extractSingleFile(req.files);
+    if (!file || !file.data) {
+      return res.status(400).json({ error: "Fichier d'upload invalide." });
+    }
+
+    const extension = path.extname(file.name || "").toLowerCase();
+    if (!allowedFlashImageExtensions.has(extension)) {
+      return res
+        .status(400)
+        .json({ error: "Extension d'image non autorisee." });
+    }
+
+    if (file.size && file.size > MAX_FLASH_IMAGE_BYTES) {
+      return res
+        .status(400)
+        .json({ error: "Fichier trop volumineux (4 Mo max)." });
+    }
+
+    const targetRepertoire =
+      (req.body && req.body.repertoire) || card.repertoire;
+    let sanitizedRepertoire;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "Repertoire"
+      );
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+
+    const tagNumber = normalizeTagNumber(
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "num")
+        ? req.body.num
+        : card.num
+    );
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+
+    const { base, ext } = sanitizeFileBaseName(file.name, extension);
+    const uniqueName = `${base}_${Date.now()}${ext}`;
+    const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesFlash/${uniqueName}`;
+    const fileRef = bucket.file(objectPath);
+
+    const normalizedFlash = sanitizeFlashArray(card.flash || []);
+    const targetFlash =
+      normalizedFlash.find((q) => q && q.id === flashId) || null;
+    if (!targetFlash) {
+      return res.status(404).json({ error: "Flash card introuvable." });
+    }
+
+    if (targetFlash[field]) {
+      const safeName = targetFlash[field];
+      if (isSafeFileName(safeName)) {
+        const previousFile = bucket.file(
+          `${sanitizedRepertoire}/tag${tagNumber}/imagesFlash/${safeName}`
+        );
+        previousFile
+          .delete({ ignoreNotFound: true })
+          .catch((err) =>
+            console.warn("Suppression ancienne image flash echouee", err)
+          );
+      }
+    }
+
+    await uploadBufferToBucket(fileRef, file.data, file.mimetype);
+    await makePublicIfAllowed(fileRef, "l'image");
+
+    const nextFlash = normalizedFlash.map((q, idx) => ({
+      ...q,
+      id: q.id || `f${idx + 1}`,
+      [field]: q.id === flashId ? uniqueName : q[field] || "",
+    }));
+
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { flash: sanitizeFlashArray(nextFlash) },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres upload." });
+    }
+
+    return res.json({
+      result: updatedCard,
+      fileName: uniqueName,
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+    });
+  } catch (error) {
+    console.error("POST /cards/:id/flash/image", error);
+    return res.status(500).json({ error: "Erreur lors de l'upload de l'image." });
+  }
+});
+
+router.delete("/:id/flash/image", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const flashId = typeof req.body?.flashId === "string" ? req.body.flashId.trim() : "";
+    const image = typeof req.body?.image === "string" ? req.body.image.trim() : "";
+    const fieldRaw = typeof req.body?.field === "string" ? req.body.field.trim() : "";
+    const field =
+      fieldRaw === "imquestion" || fieldRaw === "imreponse" ? fieldRaw : null;
+
+    if (!flashId || !image || !field) {
+      return res.status(400).json({ error: "flashId, field et image requis." });
+    }
+    if (!isSafeFileName(image)) {
+      return res.status(400).json({ error: "Nom de fichier invalide." });
+    }
+
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const targetRepertoire =
+      (req.body && req.body.repertoire) || card.repertoire;
+    let sanitizedRepertoire;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        targetRepertoire,
+        "Repertoire"
+      );
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
+    }
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+
+    const tagNumber = normalizeTagNumber(
+      req.body && Object.prototype.hasOwnProperty.call(req.body, "num")
+        ? req.body.num
+        : card.num
+    );
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+
+    const normalizedFlash = sanitizeFlashArray(card.flash || []);
+    const exists = normalizedFlash.some(
+      (q) => q && q.id === flashId && q[field] === image
+    );
+    if (!exists) {
+      return res.status(404).json({ error: "Image non trouvee dans le flash." });
+    }
+
+    const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesFlash/${image}`;
+    try {
+      await bucket.file(objectPath).delete({ ignoreNotFound: true });
+    } catch (err) {
+      console.warn("Suppression image flash echouee", err);
+    }
+
+    const nextFlash = normalizedFlash.map((q, idx) => ({
+      ...q,
+      id: q.id || `f${idx + 1}`,
+      [field]: q.id === flashId ? "" : q[field] || "",
+    }));
+    const updatedCard = await Card.findByIdAndUpdate(
+      id,
+      { flash: sanitizeFlashArray(nextFlash) },
+      { new: true }
+    ).lean();
+    if (!updatedCard) {
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres suppression." });
+    }
+
+    return res.json({ result: updatedCard });
+  } catch (error) {
+    console.error("DELETE /cards/:id/flash/image", error);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la suppression de l'image." });
+  }
+});
 
 router.post("/:id/bg/upload", requireAdmin, async (req, res) => {
   const { id } = req.params;
