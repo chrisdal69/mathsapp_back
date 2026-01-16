@@ -674,22 +674,48 @@ const sanitizeVideoArray = (list) =>
       }))
     : [];
 
-const sanitizeFlashArray = (list) =>
-  Array.isArray(list)
-    ? list.map((item, idx) => {
-        const trimmedId =
-          typeof item?.id === "string" ? item.id.trim() : "";
-        return {
-          id: trimmedId || `f${idx + 1}`,
-          question: typeof item?.question === "string" ? item.question.trim() : "",
-          imquestion:
-            typeof item?.imquestion === "string" ? item.imquestion.trim() : "",
-          reponse: typeof item?.reponse === "string" ? item.reponse.trim() : "",
-          imreponse:
-            typeof item?.imreponse === "string" ? item.imreponse.trim() : "",
-        };
-      })
-    : [];
+const sanitizeFlashArray = (list) => {
+  if (!Array.isArray(list)) return [];
+  const reservedIds = new Set();
+  list.forEach((item) => {
+    const trimmedId = typeof item?.id === "string" ? item.id.trim() : "";
+    if (trimmedId) {
+      reservedIds.add(trimmedId);
+    }
+  });
+  const usedIds = new Set();
+  let counter = 1;
+  const nextId = () => {
+    let candidate = `f${counter}`;
+    while (reservedIds.has(candidate) || usedIds.has(candidate)) {
+      counter += 1;
+      candidate = `f${counter}`;
+    }
+    usedIds.add(candidate);
+    reservedIds.add(candidate);
+    counter += 1;
+    return candidate;
+  };
+
+  return list.map((item) => {
+    const trimmedId = typeof item?.id === "string" ? item.id.trim() : "";
+    let id = trimmedId;
+    if (!id || usedIds.has(id)) {
+      id = nextId();
+    } else {
+      usedIds.add(id);
+    }
+    return {
+      id,
+      question: typeof item?.question === "string" ? item.question.trim() : "",
+      imquestion:
+        typeof item?.imquestion === "string" ? item.imquestion.trim() : "",
+      reponse: typeof item?.reponse === "string" ? item.reponse.trim() : "",
+      imreponse:
+        typeof item?.imreponse === "string" ? item.imreponse.trim() : "",
+    };
+  });
+};
 
 const isSafeFileName = (value) => {
   if (!value || typeof value !== "string") return false;
