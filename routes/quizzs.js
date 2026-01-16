@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const path = require("path");
+const archiver = require("archiver");
 const yup = require("yup");
 const { Storage } = require("@google-cloud/storage");
 const { authenticate, requireAdmin } = require("../middlewares/auth");
@@ -170,6 +171,31 @@ const isSafeFileName = (value) => {
   return true;
 };
 
+const isAllowedImageName = (value) => {
+  if (!isSafeFileName(value)) return false;
+  const ext = path.extname(value).toLowerCase();
+  return allowedImageExtensions.has(ext);
+};
+
+const buildExportZipName = (card, id) => {
+  const parts = ["quizz"];
+  const repertoire = (card?.repertoire ?? "").toString().trim();
+  if (repertoire) parts.push(repertoire);
+  const num =
+    typeof card?.num !== "undefined" && card?.num !== null
+      ? `${card.num}`.trim()
+      : "";
+  if (num) parts.push(`tag${num}`);
+  if (parts.length === 1 && id) parts.push(`${id}`);
+  const base = parts.join("_");
+  const safe = base
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return `${safe || "quizz"}.zip`;
+};
+
 router.get("/historique", authenticate, async (req, res) => {
   try {
     const cardId = (req.query && req.query.cardId) || "";
@@ -315,6 +341,89 @@ router.get("/:id/results/export", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("GET /quizzs/:id/results/export", error);
     return res.status(500).json({ error: "Erreur lors de l'export des resultats." });
+  }
+});
+
+router.get("/:id/export/zip", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const card = await Card.findById(id).select("quizz num repertoire").lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const normalizedQuizz = sanitizeQuizzArray(card.quizz || []) || [];
+    const reindexedQuizz = normalizedQuizz.map((q, idx) => ({
+      ...q,
+      id: `q${idx + 1}`,
+    }));
+
+    const fileName = buildExportZipName(card, id);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("warning", (err) => {
+      console.warn("Archive warning", err);
+    });
+    archive.on("error", (err) => {
+      console.error("Erreur export zip quizz", err);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: "Erreur lors de l'export." });
+      }
+      res.end();
+    });
+
+    archive.pipe(res);
+    archive.append(JSON.stringify(reindexedQuizz, null, 2), {
+      name: "quizz.json",
+    });
+
+    let sanitizedRepertoire = null;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        card.repertoire,
+        "Repertoire"
+      );
+    } catch (error) {
+      sanitizedRepertoire = null;
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+
+    if (sanitizedRepertoire && tagNumber !== null) {
+      const imageNames = new Set();
+      reindexedQuizz.forEach((q) => {
+        if (q?.image && isAllowedImageName(q.image)) {
+          imageNames.add(q.image);
+        }
+      });
+
+      for (const imageName of imageNames) {
+        const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesQuizz/${imageName}`;
+        const fileRef = bucket.file(objectPath);
+        try {
+          const [exists] = await fileRef.exists();
+          if (!exists) continue;
+          const stream = fileRef.createReadStream();
+          stream.on("error", (err) => {
+            console.warn("Erreur lecture image export quizz", err);
+          });
+          archive.append(stream, { name: `images/${imageName}` });
+        } catch (error) {
+          console.warn("Image ignorée lors de l'export", error);
+        }
+      }
+    }
+
+    await archive.finalize();
+    return null;
+  } catch (error) {
+    console.error("GET /quizzs/:id/export/zip", error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Erreur lors de l'export." });
+    }
+    res.end();
   }
 });
 
