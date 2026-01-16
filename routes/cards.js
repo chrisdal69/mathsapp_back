@@ -1,6 +1,7 @@
 var express = require("express");
 var router = express.Router();
 const path = require("path");
+const archiver = require("archiver");
 const sharp = require("sharp");
 const mongoose = require("mongoose");
 const { Storage } = require("@google-cloud/storage");
@@ -698,6 +699,31 @@ const isSafeFileName = (value) => {
   return true;
 };
 
+const isAllowedFlashImageName = (value) => {
+  if (!isSafeFileName(value)) return false;
+  const ext = path.extname(value).toLowerCase();
+  return allowedFlashImageExtensions.has(ext);
+};
+
+const buildFlashExportZipName = (card, id) => {
+  const parts = ["flash"];
+  const repertoire = (card?.repertoire ?? "").toString().trim();
+  if (repertoire) parts.push(repertoire);
+  const num =
+    typeof card?.num !== "undefined" && card?.num !== null
+      ? `${card.num}`.trim()
+      : "";
+  if (num) parts.push(`tag${num}`);
+  if (parts.length === 1 && id) parts.push(`${id}`);
+  const base = parts.join("_");
+  const safe = base
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return `${safe || "flash"}.zip`;
+};
+
 const extractSingleFile = (files) => {
   if (!files || typeof files !== "object") {
     return null;
@@ -791,6 +817,94 @@ const buildBlurBuffer = async (buffer, format) => {
     return null;
   }
 };
+
+router.get("/:id/flash/export/zip", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const card = await Card.findById(id)
+      .select("flash num repertoire")
+      .lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const normalizedFlash = sanitizeFlashArray(card.flash || []);
+    const reindexedFlash = normalizedFlash.map((item, idx) => ({
+      ...item,
+      id: `f${idx + 1}`,
+    }));
+
+    const fileName = buildFlashExportZipName(card, id);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("warning", (err) => {
+      console.warn("Archive warning", err);
+    });
+    archive.on("error", (err) => {
+      console.error("Erreur export zip flash", err);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: "Erreur lors de l'export." });
+      }
+      res.end();
+    });
+
+    archive.pipe(res);
+    archive.append(JSON.stringify(reindexedFlash, null, 2), {
+      name: "flash.json",
+    });
+
+    let sanitizedRepertoire = null;
+    try {
+      sanitizedRepertoire = sanitizeStorageSegment(
+        card.repertoire,
+        "Repertoire"
+      );
+    } catch (error) {
+      sanitizedRepertoire = null;
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+
+    if (sanitizedRepertoire && tagNumber !== null) {
+      const imageNames = new Set();
+      reindexedFlash.forEach((item) => {
+        if (item?.imquestion && isAllowedFlashImageName(item.imquestion)) {
+          imageNames.add(item.imquestion);
+        }
+        if (item?.imreponse && isAllowedFlashImageName(item.imreponse)) {
+          imageNames.add(item.imreponse);
+        }
+      });
+
+      for (const imageName of imageNames) {
+        const objectPath = `${sanitizedRepertoire}/tag${tagNumber}/imagesFlash/${imageName}`;
+        const fileRef = bucket.file(objectPath);
+        try {
+          const [exists] = await fileRef.exists();
+          if (!exists) continue;
+          const stream = fileRef.createReadStream();
+          stream.on("error", (err) => {
+            console.warn("Erreur lecture image export flash", err);
+          });
+          archive.append(stream, { name: `images/${imageName}` });
+        } catch (error) {
+          console.warn("Image ignoree lors de l'export", error);
+        }
+      }
+    }
+
+    await archive.finalize();
+    return null;
+  } catch (error) {
+    console.error("GET /cards/:id/flash/export/zip", error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Erreur lors de l'export." });
+    }
+    res.end();
+  }
+});
 
 router.patch("/:id/flash", requireAdmin, async (req, res) => {
   const { id } = req.params;
