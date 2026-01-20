@@ -36,7 +36,9 @@ const allowedExtensions = [
   ".py",
   ".html",
   ".css",
-  ".js"
+  ".js",
+  ".ggb",
+  ".fls",
 ];
 
 // Liste blanche optionnelle des parents

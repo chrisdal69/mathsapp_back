@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "start": "nodemon ./bin/www"
+    "start": "nodemon ./bin/www",
+    "migrate:cards-content": "node ./scripts/migrate-cards-content.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.17.1",

@@ -71,9 +71,32 @@ function generateCode(length = 4) {
   return result;
 }
 
+function removeSpaces(str) {
+  if (typeof str !== "string") return "";
+
+  // remplace accents ciblés puis enlève les espaces
+  const accentMap = {
+    é: "e", ë: "e", è: "e", ê: "e", É: "E", Ë: "E", È: "E", Ê: "E",
+    ô: "o", ö: "o", Ô: "O", Ö: "O",
+    ü: "u", ù: "u", û: "u", Ü: "U", Ù: "U", Û: "U",
+    ï: "i", î: "i", Ï: "I", Î: "I",
+    â: "a", à: "a", ä: "a", Â: "A", À: "A", Ä: "A",
+    ç: "c", Ç: "C",
+  };
+
+  const withoutSpaces = str.replace(/\s+/g, "");
+  return withoutSpaces.replace(
+    /[éëèêÉËÈÊôöÔÖüùûÜÙÛïîÏÎâàäÂÀÄçÇ]/g,
+    (c) => accentMap[c] || ""
+  );
+}
+
+
 router.post("/signup", async (req, res) => {
   let { nom, prenom, email, password, confirmPassword } = req.body;
+  nom = removeSpaces(nom);
   nom = nom.toUpperCase().trim();
+  prenom = removeSpaces(prenom)
   prenom = prenom.toLowerCase().trim();
   email = email.toLowerCase().trim();
   try {

@@ -59,6 +59,8 @@ const allowedFileExtensions = new Set([
   ".svg",
   ".webp",
   ".mp4",
+  ".fls",
+  ".ggb"
 ]);
 const allowedFlashImageExtensions = new Set([".jpg", ".jpeg", ".png"]);
 const MAX_FLASH_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -173,8 +175,13 @@ router.post("/admin", requireAdmin, async (req, res) => {
         cloud: false,
         bg: "",
         titre: "",
-        presentation: [],
-        plan: [],
+        content: [
+          {
+            type: "paragraph",
+            children: [{ text: "" }],
+          },
+        ],
+        contentVersion: 1,
         fichiers: [],
         quizz: [],
         flash:[],
@@ -308,6 +315,7 @@ router.post("/cloud", requireAdmin, async (req, res) => {
       prenom: trimmedPrenom,
     }).lean();
     if (!user) {
+      console.log(trimmedNom , trimmedPrenom )
       return res.status(404).json({ error: "Utilisateur introuvable." });
     }
 
@@ -526,35 +534,24 @@ router.patch("/:id/move", requireAdmin, async (req, res) => {
   }
 });
 
-const sanitizeStringArray = (value) => {
-  if (!Array.isArray(value)) return null;
-  const next = value
-    .map((item) =>
-      typeof item === "string"
-        ? item.trim()
-        : typeof item === "number"
-        ? `${item}`.trim()
-        : ""
-    )
-    .map((item) => item || "")
-    .filter((item) => item.length);
-  return next;
-};
-
-const patchListField = async (req, res, fieldName) => {
+router.patch("/:id/content", requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const payload = sanitizeStringArray((req.body || {})[fieldName]);
+  const rawContent = (req.body || {}).content;
+  const rawVersion = (req.body || {}).contentVersion;
 
-  if (!payload) {
+  if (!Array.isArray(rawContent)) {
     return res.status(400).json({
-      error: `Le champ ${fieldName} doit être un tableau de chaînes.`,
+      error: "Le champ content doit etre un tableau Slate.",
     });
   }
+
+  const normalizedVersion =
+    Number.isInteger(rawVersion) && rawVersion > 0 ? rawVersion : 1;
 
   try {
     const updatedCard = await Card.findByIdAndUpdate(
       id,
-      { [fieldName]: payload },
+      { content: rawContent, contentVersion: normalizedVersion },
       { new: true }
     ).lean();
 
@@ -564,17 +561,9 @@ const patchListField = async (req, res, fieldName) => {
 
     res.json({ result: updatedCard });
   } catch (err) {
-    console.error(`PATCH /cards/:id/${fieldName}`, err);
+    console.error("PATCH /cards/:id/content", err);
     res.status(500).json({ error: "Erreur serveur." });
   }
-};
-
-router.patch("/:id/presentation", requireAdmin, async (req, res) => {
-  await patchListField(req, res, "presentation");
-});
-
-router.patch("/:id/plan", requireAdmin, async (req, res) => {
-  await patchListField(req, res, "plan");
 });
 
 const patchStringField = async (req, res, fieldName, label = fieldName) => {
