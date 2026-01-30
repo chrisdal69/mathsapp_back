@@ -37,7 +37,7 @@ const cardSchema = new mongoose.Schema({
   video: { type: [hrefSchema], default: [] },
   evalQuizz:String,
   resultatQuizz:Boolean,
-  visible:Boolean,
+  visible:Boolean,  
   order:Number,
 });
 
