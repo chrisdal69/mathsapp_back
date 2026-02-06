@@ -1647,6 +1647,351 @@ router.post("/:id/files/confirm", requireAdmin, async (req, res) => {
   }
 });
 
+router.post("/:id/files/replace/sign", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const targetHref = (
+    req.body && Object.prototype.hasOwnProperty.call(req.body, "href")
+      ? `${req.body.href}`
+      : ""
+  ).trim();
+  const rawName = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const rawType = typeof req.body?.type === "string" ? req.body.type.trim() : "";
+  const rawSize = req.body?.size;
+
+  if (!targetHref) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(targetHref)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+  if (!rawName) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+
+  const size = Number(rawSize);
+  if (!Number.isFinite(size) || size <= 0) {
+    return res.status(400).json({ error: "Taille de fichier invalide." });
+  }
+  if (size > MAX_FILE_BYTES) {
+    return res
+      .status(400)
+      .json({ error: "Fichier trop volumineux (100 Mo max)." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const existsInCard = Array.isArray(card.fichiers)
+      ? card.fichiers.some((f) => f && f.href === targetHref)
+      : false;
+    if (!existsInCard) {
+      return res
+        .status(404)
+        .json({ error: "Fichier non trouve dans la carte." });
+    }
+
+    const rawExtension = path.extname(rawName || "").toLowerCase();
+    const { ext, base } = sanitizeFileBaseName(rawName, rawExtension);
+    if (!ext || !allowedFileExtensions.has(ext)) {
+      return res
+        .status(400)
+        .json({ error: "Extension de fichier non autorisee." });
+    }
+
+    const sanitizedRepertoire = sanitizeStorageSegment(
+      card.repertoire,
+      "Repertoire"
+    );
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+    const normalizedTagNumber = Math.trunc(tagNumber);
+
+    const uniqueName = `${base}_${Date.now()}${ext}`;
+    const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${uniqueName}`;
+    const fileRef = bucket.file(objectPath);
+    const contentType = rawType || "application/octet-stream";
+
+    const [signedUrl] = await fileRef.getSignedUrl({
+      version: "v4",
+      action: "write",
+      expires: Date.now() + 15 * 60 * 1000,
+      contentType,
+    });
+
+    return res.json({
+      result: {
+        url: signedUrl,
+        fileName: uniqueName,
+        objectPath,
+        contentType,
+        publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+      },
+    });
+  } catch (err) {
+    console.error("POST /cards/:id/files/replace/sign", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la preparation du remplacement." });
+  }
+});
+
+router.post("/:id/files/replace/confirm", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const targetHref = (
+    req.body && Object.prototype.hasOwnProperty.call(req.body, "href")
+      ? `${req.body.href}`
+      : ""
+  ).trim();
+  const rawFileName =
+    typeof req.body?.fileName === "string" ? req.body.fileName.trim() : "";
+
+  if (!targetHref) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(targetHref)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+  if (!rawFileName) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(rawFileName)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+  if (rawFileName === targetHref) {
+    return res.status(400).json({ error: "Fichier de remplacement invalide." });
+  }
+
+  const extension = path.extname(rawFileName).toLowerCase();
+  if (!extension || !allowedFileExtensions.has(extension)) {
+    return res
+      .status(400)
+      .json({ error: "Extension de fichier non autorisee." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const existsInCard = Array.isArray(card.fichiers)
+      ? card.fichiers.some((f) => f && f.href === targetHref)
+      : false;
+    if (!existsInCard) {
+      return res
+        .status(404)
+        .json({ error: "Fichier non trouve dans la carte." });
+    }
+
+    const sanitizedRepertoire = sanitizeStorageSegment(
+      card.repertoire,
+      "Repertoire"
+    );
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+    const normalizedTagNumber = Math.trunc(tagNumber);
+
+    const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${rawFileName}`;
+    const fileRef = bucket.file(objectPath);
+    const [exists] = await fileRef.exists();
+    if (!exists) {
+      return res
+        .status(404)
+        .json({ error: "Fichier introuvable sur le stockage." });
+    }
+
+    let metadata;
+    try {
+      [metadata] = await fileRef.getMetadata();
+    } catch (err) {
+      console.warn("Impossible de lire les metadonnees du fichier.", err);
+      metadata = null;
+    }
+
+    const storedSize = Number(metadata?.size);
+    if (Number.isFinite(storedSize) && storedSize > MAX_FILE_BYTES) {
+      try {
+        await fileRef.delete({ ignoreNotFound: true });
+      } catch (err) {
+        console.warn("Suppression du fichier trop volumineux echouee.", err);
+      }
+      return res
+        .status(400)
+        .json({ error: "Fichier trop volumineux (100 Mo max)." });
+    }
+
+    await makePublicIfAllowed(fileRef, "le fichier");
+
+    const updatedCard = await Card.findOneAndUpdate(
+      {
+        _id: card._id,
+        repertoire: card.repertoire,
+        num: card.num,
+        "fichiers.href": targetHref,
+      },
+      { $set: { "fichiers.$.href": rawFileName } },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      try {
+        await fileRef.delete({ ignoreNotFound: true });
+      } catch (err) {
+        console.warn("Suppression fichier orphelin echouee", err);
+      }
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres remplacement." });
+    }
+
+    const oldPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${targetHref}`;
+    try {
+      await bucket.file(oldPath).delete({ ignoreNotFound: true });
+    } catch (err) {
+      console.warn("Suppression de l'ancien fichier bucket echouee", err);
+    }
+
+    return res.json({
+      result: updatedCard,
+      fileName: rawFileName,
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+    });
+  } catch (err) {
+    console.error("POST /cards/:id/files/replace/confirm", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la confirmation du remplacement." });
+  }
+});
+
+router.post("/:id/files/replace", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const targetHref = (
+    req.body && Object.prototype.hasOwnProperty.call(req.body, "href")
+      ? `${req.body.href}`
+      : ""
+  ).trim();
+
+  if (!targetHref) {
+    return res.status(400).json({ error: "Nom de fichier manquant." });
+  }
+  if (!isSafeFileName(targetHref)) {
+    return res.status(400).json({ error: "Nom de fichier invalide." });
+  }
+
+  try {
+    const card = await Card.findById(id).lean();
+    if (!card) {
+      return res.status(404).json({ error: "Carte introuvable." });
+    }
+
+    const existsInCard = Array.isArray(card.fichiers)
+      ? card.fichiers.some((f) => f && f.href === targetHref)
+      : false;
+    if (!existsInCard) {
+      return res
+        .status(404)
+        .json({ error: "Fichier non trouve dans la carte." });
+    }
+
+    if (!req.files || Object.keys(req.files).length === 0) {
+      return res.status(400).json({ error: "Aucun fichier fourni." });
+    }
+
+    const uploadedFile = extractSingleFile(req.files);
+    if (!uploadedFile || !uploadedFile.data) {
+      return res.status(400).json({ error: "Fichier d'upload invalide." });
+    }
+
+    const rawExtension = path.extname(uploadedFile.name || "").toLowerCase();
+    const { ext, base } = sanitizeFileBaseName(uploadedFile.name, rawExtension);
+    if (!ext || !allowedFileExtensions.has(ext)) {
+      return res
+        .status(400)
+        .json({ error: "Extension de fichier non autorisee." });
+    }
+
+    if (uploadedFile.size && uploadedFile.size > MAX_FILE_BYTES) {
+      return res
+        .status(400)
+        .json({ error: "Fichier trop volumineux (100 Mo max)." });
+    }
+
+    const sanitizedRepertoire = sanitizeStorageSegment(
+      card.repertoire,
+      "Repertoire"
+    );
+    if (!sanitizedRepertoire) {
+      return res.status(400).json({ error: "Repertoire manquant." });
+    }
+    const tagNumber = normalizeTagNumber(card.num);
+    if (tagNumber === null) {
+      return res.status(400).json({ error: "Numero de tag invalide." });
+    }
+    const normalizedTagNumber = Math.trunc(tagNumber);
+
+    const uniqueName = `${base}_${Date.now()}${ext}`;
+    const objectPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${uniqueName}`;
+    const fileRef = bucket.file(objectPath);
+
+    await uploadBufferToBucket(fileRef, uploadedFile.data, uploadedFile.mimetype);
+    await makePublicIfAllowed(fileRef, "le fichier");
+
+    const updatedCard = await Card.findOneAndUpdate(
+      {
+        _id: card._id,
+        repertoire: card.repertoire,
+        num: card.num,
+        "fichiers.href": targetHref,
+      },
+      { $set: { "fichiers.$.href": uniqueName } },
+      { new: true }
+    ).lean();
+
+    if (!updatedCard) {
+      try {
+        await fileRef.delete({ ignoreNotFound: true });
+      } catch (err) {
+        console.warn("Suppression fichier orphelin echouee", err);
+      }
+      return res
+        .status(404)
+        .json({ error: "Carte introuvable apres remplacement." });
+    }
+
+    const oldPath = `${sanitizedRepertoire}/tag${normalizedTagNumber}/${targetHref}`;
+    try {
+      await bucket.file(oldPath).delete({ ignoreNotFound: true });
+    } catch (err) {
+      console.warn("Suppression de l'ancien fichier bucket echouee", err);
+    }
+
+    return res.json({
+      result: updatedCard,
+      fileName: uniqueName,
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${objectPath}`,
+    });
+  } catch (err) {
+    console.error("POST /cards/:id/files/replace", err);
+    return res
+      .status(500)
+      .json({ error: "Erreur lors du remplacement du fichier." });
+  }
+});
+
 router.post("/:id/files", requireAdmin, async (req, res) => {
   const { id } = req.params;
 
